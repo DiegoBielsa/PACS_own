@@ -83,7 +83,7 @@ int main(int argc, const char *argv[]) {
 
     size_t useful_threads = std::min(uint(threads), std::thread::hardware_concurrency());
 
-    std::vector<my_float> output(useful_threads, 0);
+    std::vector<my_float> output(useful_threads, 0.0f);
     std::vector<std::thread> thread_vector;
     std::vector<std::chrono::milliseconds> extime_thread;
 
@@ -103,7 +103,7 @@ int main(int argc, const char *argv[]) {
         thread_vector[i].join();
         pi += output[i];
     }
-    pi *= 4;
+    pi *= 4.0f;
     
     global_end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = global_end - global_start;
