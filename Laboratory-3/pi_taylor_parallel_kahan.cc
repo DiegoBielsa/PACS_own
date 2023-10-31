@@ -8,7 +8,7 @@
 #include <vector>
 
 using my_float = long double;
-
+/*
 void
 pi_taylor_chunk(std::vector<my_float> &output,
         size_t thread_id, size_t start_step, size_t stop_step) {
@@ -35,10 +35,10 @@ usage(int argc, const char *argv[]) {
     }
     return std::make_pair(steps, threads);
 }
+*/
+int main() {
 
-int main(int argc, const char *argv[]) {
-
-
+/*
     auto ret_pair = usage(argc, argv);
     auto steps = ret_pair.first;
     auto threads = ret_pair.second;
@@ -51,5 +51,6 @@ int main(int argc, const char *argv[]) {
     std::cout << "For " << steps << ", pi value: "
         << std::setprecision(std::numeric_limits<long double>::digits10 + 1)
         << pi << std::endl;
+        */
 }
 

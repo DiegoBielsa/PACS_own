@@ -6,8 +6,39 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <chrono>
 
 using my_float = long double;
+
+typedef struct {
+    size_t large_chunk;
+    size_t small_chunk;
+    size_t split_item;
+} chunk_info;
+
+// For a given number of iterations N and threads
+// the iterations are divided:
+// N % threads receive N / threads + 1 iterations
+// the rest receive N / threads
+constexpr chunk_info
+split_evenly(size_t N, size_t threads)
+{
+    return {N / threads + 1, N / threads, N % threads};
+}
+
+std::pair<size_t, size_t>
+get_chunk_begin_end(const chunk_info& ci, size_t index)
+{
+    size_t begin = 0, end = 0;
+    if (index < ci.split_item ) {
+        begin = index*ci.large_chunk;
+        end = begin + ci.large_chunk; // (index + 1) * ci.large_chunk
+    } else {
+        begin = ci.split_item*ci.large_chunk + (index - ci.split_item) * ci.small_chunk;
+        end = begin + ci.small_chunk;
+    }
+    return std::make_pair(begin, end);
+}
 
 void
 pi_taylor_chunk(std::vector<my_float> &output,
@@ -15,7 +46,7 @@ pi_taylor_chunk(std::vector<my_float> &output,
 
     int sign = start_step & 0x1 ? -1 : 1;
     for (size_t n = start_step; n < stop_step; n++) {
-        output[n] = sign / static_cast<float>(2 * n + 1);
+        output[thread_id] += sign / static_cast<float>(2 * n + 1);
         sign = -sign;
     }
 }
@@ -46,31 +77,50 @@ int main(int argc, const char *argv[]) {
     auto steps = ret_pair.first;
     auto threads = ret_pair.second;
 
-    int num_divisions = steps / threads;
+    // Using time point and system_clock
+    std::chrono::time_point<std::chrono::system_clock> global_start, global_end;
+    global_start = std::chrono::system_clock::now();
 
-    std::vector<my_float> output(steps);
-    std::thread thread_pool[threads];
+    size_t useful_threads = std::min(uint(threads), std::thread::hardware_concurrency());
 
-    for (int i = 0; i < threads; i++) {
-        int start = i * num_divisions;
-        int stop = i == threads - 1 ? steps - 1 : ((i + 1) * num_divisions) - 1;
-        thread_pool[i] = std::thread(pi_taylor_chunk, ref(output), i, start, stop);
+    std::vector<my_float> output(useful_threads, 0);
+    std::vector<std::thread> thread_vector;
+    std::vector<std::chrono::milliseconds> extime_thread;
+
+    auto chunks = split_evenly(steps, threads);
+    // ToDo : run several times and check median and deviation
+    // launch the work
+    auto start = std::chrono::steady_clock::now();
+    for(size_t i = 0; i < useful_threads; ++i) {
+        auto begin_end = get_chunk_begin_end(chunks, i);
+        thread_vector.push_back(std::thread(pi_taylor_chunk, ref(output), i, begin_end.first, begin_end.second));
+        //std::cout << i << ", " << begin_end.first << ", " << begin_end.second << std::endl;
     }
-    
+
     my_float pi = 0.0f;
-
-    for (size_t i = 0; i < threads; ++i) {
-        thread_pool[i].join();
-    }
-
-    for (int i = 0; i < steps; i++) {
+    // wait for completion
+    for(size_t i = 0; i < useful_threads; ++i) {
+        thread_vector[i].join();
         pi += output[i];
     }
-
     pi *= 4;
+    
+    global_end = std::chrono::system_clock::now();
+    std::chrono::duration<double> elapsed_seconds = global_end - global_start;
 
-    std::cout << "For " << steps << ", pi value: "
+    auto stop = std::chrono::steady_clock::now();
+    extime_thread.push_back(
+            std::chrono::duration_cast<std::chrono::milliseconds>
+            (stop-start));
+
+    // clean the vector array
+    thread_vector.clear();
+    
+
+    std::cout << "For " << steps << " steps, and " << threads << " threads, pi value: "
         << std::setprecision(std::numeric_limits<long double>::digits10 + 1)
         << pi << std::endl;
+    
+    std::cout << "time in seconds: " << elapsed_seconds.count() << "s" << std::endl;
 }
 
