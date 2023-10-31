@@ -77,21 +77,18 @@ int main(int argc, const char *argv[]) {
     auto steps = ret_pair.first;
     auto threads = ret_pair.second;
 
+    threads = std::min(uint(threads), std::thread::hardware_concurrency());
+    std::cout << "Your machine supports " << std::thread::hardware_concurrency() << " threads. Therefore, the number of threads to launch is " << threads << std::endl;
+
     // Using time point and system_clock
     std::chrono::time_point<std::chrono::system_clock> global_start, global_end;
     global_start = std::chrono::system_clock::now();
 
-    size_t useful_threads = std::min(uint(threads), std::thread::hardware_concurrency());
-
-    std::vector<my_float> output(useful_threads, 0.0f);
+    std::vector<my_float> output(threads, 0.0f);
     std::vector<std::thread> thread_vector;
-    std::vector<std::chrono::milliseconds> extime_thread;
 
     auto chunks = split_evenly(steps, threads);
-    // ToDo : run several times and check median and deviation
-    // launch the work
-    auto start = std::chrono::steady_clock::now();
-    for(size_t i = 0; i < useful_threads; ++i) {
+    for(size_t i = 0; i < threads; ++i) {
         auto begin_end = get_chunk_begin_end(chunks, i);
         thread_vector.push_back(std::thread(pi_taylor_chunk, ref(output), i, begin_end.first, begin_end.second));
         //std::cout << i << ", " << begin_end.first << ", " << begin_end.second << std::endl;
@@ -99,7 +96,7 @@ int main(int argc, const char *argv[]) {
 
     my_float pi = 0.0f;
     // wait for completion
-    for(size_t i = 0; i < useful_threads; ++i) {
+    for(size_t i = 0; i < threads; ++i) {
         thread_vector[i].join();
         pi += output[i];
     }
@@ -107,20 +104,13 @@ int main(int argc, const char *argv[]) {
     
     global_end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = global_end - global_start;
-
-    auto stop = std::chrono::steady_clock::now();
-    extime_thread.push_back(
-            std::chrono::duration_cast<std::chrono::milliseconds>
-            (stop-start));
-
-    // clean the vector array
-    thread_vector.clear();
     
 
     std::cout << "For " << steps << " steps, and " << threads << " threads, pi value: "
         << std::setprecision(std::numeric_limits<long double>::digits10 + 1)
         << pi << std::endl;
     
-    std::cout << "time in seconds: " << elapsed_seconds.count() << "s" << std::endl;
+    std::cout << " TOTAL time in seconds: " << elapsed_seconds.count() << "s" << std::endl;
+
 }
 
