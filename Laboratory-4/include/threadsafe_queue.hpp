@@ -9,17 +9,17 @@ template<typename T>
 class threadsafe_queue
 {
   private:
-      std::mutex mut;
-      std::queue<T> data_queue;
-      std::condition_variable data_cond;
+      mutable std::mutex _m;
+      std::queue<T> _data_queue;
+      std::condition_variable _cv;
 
   public:
     threadsafe_queue() {}
 
     threadsafe_queue(const threadsafe_queue& other)
     {
-        std::lock_guard<std::mutex> lk(other.mut);
-	    data_queue = other.data_queue;
+        std::lock_guard<std::mutex> lk(other._m);
+	    _data_queue = other._data_queue;
     }
 
     threadsafe_queue& operator=(const threadsafe_queue&) = delete;
@@ -27,40 +27,41 @@ class threadsafe_queue
     void push(T new_value)
     {
         
-        std::lock_guard<std::mutex> lk(this->mut);
-        data_queue.push(new_value);
-        data_cond.notify_one();
+        std::lock_guard<std::mutex> lk(_m);
+        _data_queue.push(new_value);
+        _cv.notify_one();
     }
 
+    // this function just try to pop, but doesn't block itself
     bool try_pop(T& value)
     {
-	    if (this->empty()) return false;
-        value = data_queue.front();
+        std::unique_lock<std::mutex> lk(_m);
+	    if (_data_queue.empty()) return false;
+        value = _data_queue.front();
+        _data_queue.pop();
         return true;
     }
 
     void wait_and_pop(T& value)
     {
-	    std::unique_lock<std::mutex> lk(this->mut);
-        data_cond.wait(lk, try_pop(value));
-        data_queue.pop();
-        lk.unlock();
+	    std::unique_lock<std::mutex> lk(_m);
+        _cv.wait(lk, [this]{return !_data_queue.empty();});
+        value = _data_queue.front();
+        _data_queue.pop();
     }
 
     std::shared_ptr<T> wait_and_pop()
     {
-	    std::unique_lock<std::mutex> lk(this->mut);
-        T value;
-        data_cond.wait(lk, try_pop(value));
-        std::shared_ptr<T> value_ptr = std::make_shared<T>(value);
-        data_queue.pop();
-        lk.unlock();
-        return value_ptr;
+	    std::unique_lock<std::mutex> lk(_m);
+        _cv.wait(lk, [this]{return !_data_queue.empty();});
+        std::shared_ptr<T> res(std::make_shared<T>(_data_queue.front()));
+        _data_queue.pop();
+        return res;
     }
 
     bool empty() const
     {
-        std::lock_guard<std::mutex> lk(this->mut);
-	    return data_queue.empty();
+        std::lock_guard<std::mutex> lk(_m);
+	    return _data_queue.empty();
     }
 };

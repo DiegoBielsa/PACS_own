@@ -231,7 +231,7 @@ void write_output_file(const std::unique_ptr<Vec[]>& c, size_t w, size_t h)
 }
 
 int main(int argc, char *argv[]){
-    size_t w=1024, h=768, samps = 2; // # samples
+    size_t w=1024, h=768, samps = 64; // # samples
 
     Ray cam(Vec(50,52,295.6), Vec(0,-0.042612,-1).norm()); // cam pos, dir
     Vec cx=Vec(w*.5135/h), cy=(cx%cam.d).norm()*.5135;
@@ -246,11 +246,29 @@ int main(int argc, char *argv[]){
     auto *c_ptr = c.get(); // raw pointer to Vector c
 
     // create a thread pool
+    thread_pool pool(std::thread::hardware_concurrency());
 
     // launch the tasks
+    const auto y_height = h / h_div;
+    const auto x_width = w / w_div;
 
+    int numTasks = 0;
+    for (size_t i = 0; i < h_div; ++i) {
+        for (size_t j = 0; j < w_div; ++j) {
+            size_t y0 = i * y_height;
+            size_t y1 = i == h_div -1 ? h : y0 + y_height;
 
+            size_t x0 = j * x_width;
+            size_t x1 = j == w_div -1 ? w : x0 + x_width;
+
+            Region reg(x0, x1, y0, y1);
+            pool.submit([=]{ render(w, h, samps, cam, cx, cy, c_ptr, reg); });
+            numTasks++;
+        }
+    }
     // wait for completion
+    pool.wait();
+
     auto stop = std::chrono::steady_clock::now();
     std::cout << "Execution time: " <<
       std::chrono::duration_cast<std::chrono::milliseconds>(stop-start).count() << " ms." << std::endl;

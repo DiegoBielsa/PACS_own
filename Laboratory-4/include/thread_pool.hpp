@@ -41,14 +41,20 @@ class thread_pool
 
   ~thread_pool()
   {
-    wait();
+    wait(); // wait for completion
   }
 
   void wait()
   {
-      // wait for completion
-    
       // active waiting
+      while(!_done) {
+        if (_work_queue.empty()) {
+          _done = true;
+        } else {
+          std::this_thread::yield();
+        }
+      }
+      _joiner.~join_threads();
   }
 
   template<typename F>

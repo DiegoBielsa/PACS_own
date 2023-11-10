@@ -91,7 +91,7 @@ int main(int argc, const char *argv[]) {
     for(size_t i = 0; i < threads; ++i) {
         auto begin_end = get_chunk_begin_end(chunks, i);
         thread_vector.push_back(std::thread(pi_taylor_chunk, ref(output), i, begin_end.first, begin_end.second));
-        //std::cout << i << ", " << begin_end.first << ", " << begin_end.second << std::endl;
+        std::cout << i << ", " << begin_end.first << ", " << begin_end.second << std::endl;
     }
 
     my_float pi = 0.0f;
@@ -106,6 +106,7 @@ int main(int argc, const char *argv[]) {
     std::chrono::duration<double> elapsed_seconds = global_end - global_start;
     
 
+    std::cout << std::setprecision(std::numeric_limits<long double>::digits10 + 1) << pi << std::endl;
     std::cout << "For " << steps << " steps, and " << threads << " threads, pi value: "
         << std::setprecision(std::numeric_limits<long double>::digits10 + 1)
         << pi << std::endl;
