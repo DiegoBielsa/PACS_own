@@ -231,7 +231,7 @@ void write_output_file(const std::unique_ptr<Vec[]>& c, size_t w, size_t h)
 }
 
 int main(int argc, char *argv[]){
-    size_t w=1024, h=768, samps = 64; // # samples
+    size_t w=1024, h=768, samps = 2; // # samples
 
     Ray cam(Vec(50,52,295.6), Vec(0,-0.042612,-1).norm()); // cam pos, dir
     Vec cx=Vec(w*.5135/h), cy=(cx%cam.d).norm()*.5135;
