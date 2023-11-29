@@ -246,7 +246,9 @@ int main(int argc, char *argv[]){
     auto *c_ptr = c.get(); // raw pointer to Vector c
 
     // create a thread pool
+    //{ ==> scope usage
     thread_pool pool(std::thread::hardware_concurrency());
+    //thread_pool* pool = new thread_pool(std::thread::hardware_concurrency()); ==> dynamic memory usage
 
     // launch the tasks
     const auto y_height = h / h_div;
@@ -263,11 +265,14 @@ int main(int argc, char *argv[]){
 
             Region reg(x0, x1, y0, y1);
             pool.submit([=]{ render(w, h, samps, cam, cx, cy, c_ptr, reg); });
+            //pool->submit([=]{ render(w, h, samps, cam, cx, cy, c_ptr, reg); }); ==> dynamic memory usage
             numTasks++;
         }
+    //} ==> scope usage
     }
     // wait for completion
     pool.wait();
+    //delete pool; ==> dynamic memory usage
 
     auto stop = std::chrono::steady_clock::now();
     std::cout << "Execution time: " <<
