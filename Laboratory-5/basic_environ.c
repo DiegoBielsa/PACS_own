@@ -19,6 +19,8 @@
 #else
   #include <CL/cl.h>
 #endif
+
+#define N 100
   
 // check error, in such a case, it exits
 // g++ basic_environ.c -o basic -lOpenCL
@@ -30,6 +32,13 @@ void cl_error(cl_int code, const char *string){
 	}
 }
 ////////////////////////////////////////////////////////////////////////////////
+
+void initArray(float *array, size_t size) {
+    srand(time(NULL));
+    for (size_t i = 0; i < size; ++i) {
+        array[i] = (float)rand() / RAND_MAX;
+    }
+}
 
 int main(int argc, char** argv)
 {
@@ -51,6 +60,8 @@ int main(int argc, char** argv)
   cl_device_id device_id;             				// compute device id 
   cl_context context;                 				// compute context
   cl_command_queue command_queue;     				// compute command queue
+  cl_program program;                         // compute program
+  cl_kernel kernel;                           // compute kernel
     
 
   // 1. Scan the available platforms:
@@ -97,7 +108,95 @@ int main(int argc, char** argv)
   command_queue = clCreateCommandQueueWithProperties(context, devices_ids[2][0], proprt, &err);
   cl_error(err, "Failed to create a command queue\n");
 
+  /*----------------------------- LOAD KERNEL -----------------------------*/
+  // Calculate size of the file
+  FILE *fileHandler = fopen("kernel.cl", "r");
+  fseek(fileHandler, 0, SEEK_END);
+  size_t fileSize = ftell(fileHandler);
+  rewind(fileHandler);
 
+  // read kernel source into buffer
+  char * sourceCode = (char*) malloc(fileSize + 1);
+  sourceCode[fileSize] = '\0';
+  fread(sourceCode, sizeof(char), fileSize, fileHandler);
+  fclose(fileHandler);
+
+  // create program from buffer
+  program = clCreateProgramWithSource(context, fileSize, sourceCode, NULL, &err);
+  cl_error(err, "Failed to create program with source\n");
+  free(sourceCode);
+
+  /*----------------------------- BUILD KERNEL -----------------------------*/
+  // Build the executable and check errors
+  err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
+  if (err != CL_SUCCESS){
+    size_t len;
+    char buffer[2048];
+
+    printf("Error: Some error at building process.\n");
+    clGetProgramBuildInfo(program, NULL, CL_PROGRAM_BUILD_LOG, NULL, buffer, &len);
+    printf("%s\n", buffer);
+    exit(-1);
+  }
+
+  /*----------------------------- CREATE KERNEL -----------------------------*/
+  // Create a compute kernel with the program we want to run
+  kernel = clCreateKernel(program, "demo", &err);
+  cl_error(err, "Failed to create kernel from the program\n");
+
+  /*----------------------------- CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  -----------------------------*/
+  float *input_array_host = (float *)malloc(N * sizeof(float));
+  if (input_array_host == NULL) {
+      perror("Failed to allocate memory for input_array_host");
+      exit(EXIT_FAILURE);
+  }
+  initializeArray(input_array_host, N);
+
+  float *output_array_host = (float *)malloc(N * sizeof(float));
+  if (output_array_host == NULL) {
+      perror("Failed to allocate memory for output_array_host");
+      exit(EXIT_FAILURE);
+  }
+
+  /*----------------------------- CREATE INPUT AND OUTPUT ARRAYS DEVICE MEMORY  -----------------------------*/
+  cl_mem in_device_object  = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(cl_float)*N, NULL, &err);
+  cl_error(err, "Failed to create memory buffer at device\n");
+  cl_mem out_device_object = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(cl_float)*N, NULL, &err);
+  cl_error(err, "Failed to create memory buffer at device\n");
+
+  /*----------------------------- COPY DATA FROM HOST TO DEV  -----------------------------*/
+  // Write date into the memory object 
+  err = clEnqueueWriteBuffer(command_queue, in_device_object, CL_TRUE, 0, sizeof(float) * N, &input_array_host, 0, NULL, NULL);
+  cl_error(err, "Failed to enqueue a write command\n");
+
+  /*----------------------------- PASS ARGUMENTS  -----------------------------*/
+    // Set the arguments to the kernel
+  err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &in_device_object);
+  cl_error(err, "Failed to set argument 0\n");
+  err = clSetKernelArg(kernel, 1, sizeof(cl_mem), &out_device_object);
+  cl_error(err, "Failed to set argument 1\n");
+  err = clSetKernelArg(kernel, 2, N);
+  cl_error(err, "Failed to set argument 2\n");
+
+  /*----------------------------- LAUNCH KERNEL FUNCTION -----------------------------*/
+  // Launch Kernel
+  local_size = 128;
+  global_size = N;
+  err = clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL);
+  cel_error(err, "Failed to launch kernel to the device\n");
+
+  /*----------------------------- CHECK CORRECT EXECUTION -----------------------------*/
+  //enqueue the order to read results form device memory
+  clEnqueueReadBuffer(command_queue, out_device_object, CL_TRUE, N*sizeof(cl_float), sizeof(float), &output_array_host, 0, NULL, NULL);
+  printf(" %d", output_array_host); printf("\n");
+
+  /*----------------------------- FREE MEM -----------------------------*/
+  clReleaseMemObject(in_device_object);
+  clReleaseMemObject(out_device_object);
+  clReleaseProgram(program);
+  clReleaseKernel(kernel);
+  clReleaseCommandQueue(command_queue);
+  clReleaseContext(context);
 
   return 0;
 }

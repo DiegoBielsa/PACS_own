@@ -66,6 +66,7 @@
         "typeindex": "cpp",
         "typeinfo": "cpp",
         "variant": "cpp",
-        "mixinvector": "cpp"
+        "mixinvector": "cpp",
+        "image": "c"
     }
 }
