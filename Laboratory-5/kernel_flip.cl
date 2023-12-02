@@ -1,5 +1,5 @@
 __kernel void image_flip(
-  __global uchar3* image,
+  __global unsigned char* image,
   const unsigned int width,
   const unsigned int height){
 
@@ -10,16 +10,17 @@ __kernel void image_flip(
   int pos = (x ) % width;
   uchar3 myColor = {0, 0, 0};
   
-  if (x > width * height - 100000) {
-    printf(" %i;;", x);
-    image[x] =myColor;
-  }
-/*
-  if(x < (width * 20) - 1 && pos < half_width) {
+  if(x < (width * height) - 1 && pos < half_width) {
     int mirror_index = row * width + (width - 1 - pos);
-    uchar3 temp = image[x];
-    image[x] = image[mirror_index];
-    image[mirror_index] = temp;
+    uchar3 temp = {image[x * 3], image[x * 3 + 1], image[x * 3 + 2]};
+
+    image[x * 3] = image[mirror_index * 3];
+    image[x * 3 + 1] = image[mirror_index * 3 + 1];
+    image[x * 3 + 2] = image[mirror_index * 3 + 2];
+
+    image[mirror_index * 3] = temp.x;
+    image[mirror_index * 3 + 1] = temp.y;
+    image[mirror_index * 3 + 2] = temp.z;
     
-  }*/
+  }
 }

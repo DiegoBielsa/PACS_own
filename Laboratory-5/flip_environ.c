@@ -44,22 +44,22 @@ void cl_error(cl_int code, const char *string){
 }
 ////////////////////////////////////////////////////////////////////////////////
 
-void initArray(uchar3 *array, CImg<unsigned char> img) {
+void initArray(unsigned char *array, CImg<unsigned char> img) {
     for (int y = 0; y < img.height(); y++) {
         for (int x = 0; x < img.width(); x++) {
-              array[y * img.width() + x].x = img(x, y, 0, 0);
-              array[y * img.width() + x].y = img(x, y, 0, 1);
-              array[y * img.width() + x].z = img(x, y, 0, 2);
+              array[(y * img.width() + x) * 3] = img(x, y, 0, 0);
+              array[(y * img.width() + x) * 3 + 1] = img(x, y, 0, 1);
+              array[(y * img.width() + x) * 3 + 2] = img(x, y, 0, 2);
         }
     }
 }
 
-void convertImage(uchar3 *array, CImg<unsigned char> &img) {
+void convertImage(unsigned char *array, CImg<unsigned char> &img) {
     for (int y = 0; y < img.height(); y++) {
         for (int x = 0; x < img.width(); x++) {
-               img(x, y, 0, 0) = array[y * img.width() + x].x;
-               img(x, y, 0, 1) = array[y * img.width() + x].y;
-               img(x, y, 0, 2) = array[y * img.width() + x].z;
+               img(x, y, 0, 0) = array[(y * img.width() + x) * 3];
+               img(x, y, 0, 1) = array[(y * img.width() + x) * 3 + 1];
+               img(x, y, 0, 2) = array[(y * img.width() + x) * 3 + 2];
         }
     }
 }
@@ -183,7 +183,7 @@ int main(int argc, char** argv)
   cl_error(err, "Failed to create kernel from the program\n");
 
   // ################################  CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  ################################ 
-  uchar3 image_data[img.size() / 3];
+  unsigned char image_data[img.size()];
   initArray(image_data, img);
   if (image_data == NULL) {
       perror("Failed to allocate memory for image_data");
@@ -191,13 +191,13 @@ int main(int argc, char** argv)
   }
 
   // ################################ CREATE INPUT AND OUTPUT ARRAYS DEVICE MEMORY  ################################ 
-  cl_mem img_buffer = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(cl_uchar3) * img.size() / 3, NULL, &err);
+  cl_mem img_buffer = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(unsigned char) * img.size(), NULL, &err);
   cl_error(err, "Failed to create memory buffer at device\n");
 
   // ################################ COPY DATA FROM HOST TO DEV  ################################
 
   // Write data into the memory object
-  err = clEnqueueWriteBuffer(command_queue, img_buffer, CL_TRUE, 0, sizeof(uchar3) * img.size() / 3, image_data, 0, NULL, NULL);
+  err = clEnqueueWriteBuffer(command_queue, img_buffer, CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, NULL);
   cl_error(err, "Failed to enqueue a write command\n");
 
   // ################################ PASS ARGUMENTS  ################################
@@ -223,7 +223,7 @@ int main(int argc, char** argv)
 
   // ################################ READ IMAGE (AUTOMATICALLY REPLACED) ################################ 
   //enqueue the order to read results form device memory
-  err = clEnqueueReadBuffer(command_queue, img_buffer, CL_TRUE, 0, sizeof(uchar3) * img.size() / 3, image_data, 0, NULL, NULL);
+  err = clEnqueueReadBuffer(command_queue, img_buffer, CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, NULL);
   cl_error(err, "Failed to enqueue a read command\n");
   
   convertImage(image_data, img);
