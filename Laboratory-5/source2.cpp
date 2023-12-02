@@ -11,7 +11,7 @@ int main(){
   for (int i = 0; i < img.width(); i++) {
 	img(i, img.height() / 2, 0, 0) = 0;
 	img(i, img.height() / 2, 0, 1) = 0;
-	img(i, img.height() / 2, 0, 2) = 200;
+	img(i, img.height() / 2, 0, 2) = 0;
   }
 
   int i = 53;
