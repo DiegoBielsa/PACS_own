@@ -227,7 +227,6 @@ int main(int argc, char** argv)
   cl_error(err, "Failed to enqueue a read command\n");
   
   convertImage(image_data, img);
-  printf("El color posterior es (%d, %d, %d)\n", img(200, 0, 0, 0), img(200, 0, 0, 1), img(200, 0, 0, 2));
   img.save("flipped.jpg");
   
   // ################################ FREE MEM ################################ 

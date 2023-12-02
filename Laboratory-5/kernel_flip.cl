@@ -7,7 +7,7 @@ __kernel void image_flip(
   int half_width = width / 2;
   
   int row = (x) / width;
-  int pos = (x ) % width;
+  int pos = (x) % width;
   uchar3 myColor = {0, 0, 0};
   
   if(x < (width * height) - 1 && pos < half_width) {
