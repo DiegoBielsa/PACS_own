@@ -22,6 +22,7 @@ int main(){
   
   
   img.display("My first CImg code");             // Display the image in a display window
+  img.save("test.jpg");
 	
 	
 

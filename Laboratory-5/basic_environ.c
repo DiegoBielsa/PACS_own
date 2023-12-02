@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <string.h>
 #include <math.h>
 #include <unistd.h>
@@ -20,7 +21,6 @@
   #include <CL/cl.h>
 #endif
 
-#define N 100
   
 // check error, in such a case, it exits
 // g++ basic_environ.c -o basic -lOpenCL
@@ -36,12 +36,13 @@ void cl_error(cl_int code, const char *string){
 void initArray(float *array, size_t size) {
     srand(time(NULL));
     for (size_t i = 0; i < size; ++i) {
-        array[i] = (float)rand() / RAND_MAX;
+        array[i] = 2.0f;
     }
 }
 
 int main(int argc, char** argv)
 {
+  const unsigned int N = 100;
   int err;                            	// error code returned from api calls
   size_t t_buf = 50;			// size of str_buffer
   char str_buffer[t_buf];		// auxiliary buffer	
@@ -99,18 +100,22 @@ int main(int argc, char** argv)
 
 
   // 3. Create a context, with a device
-  cl_context_properties properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[2], 0};
-  context = clCreateContext(properties, n_devices[2], devices_ids[2], NULL, NULL, &err);
+  cl_context_properties properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[0], 0};
+  context = clCreateContext(properties, n_devices[0], devices_ids[0], NULL, NULL, &err);
   cl_error(err, "Failed to create a compute context\n");
 
   // 4. Create a command queue
   cl_command_queue_properties proprt[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0 };
-  command_queue = clCreateCommandQueueWithProperties(context, devices_ids[2][0], proprt, &err);
+  command_queue = clCreateCommandQueueWithProperties(context, devices_ids[0][0], proprt, &err);
   cl_error(err, "Failed to create a command queue\n");
-
-  /*----------------------------- LOAD KERNEL -----------------------------*/
+  
+  // ################################ LOAD KERNEL ################################ 
   // Calculate size of the file
   FILE *fileHandler = fopen("kernel.cl", "r");
+  if (fileHandler == NULL) {
+    printf("Unable to open file\n");
+    return 1;
+  }
   fseek(fileHandler, 0, SEEK_END);
   size_t fileSize = ftell(fileHandler);
   rewind(fileHandler);
@@ -122,75 +127,89 @@ int main(int argc, char** argv)
   fclose(fileHandler);
 
   // create program from buffer
-  program = clCreateProgramWithSource(context, fileSize, sourceCode, NULL, &err);
+  const char* constSourceCode = (const char*)sourceCode;
+  program = clCreateProgramWithSource(context, 1, &constSourceCode, NULL, &err);
   cl_error(err, "Failed to create program with source\n");
   free(sourceCode);
+  
 
-  /*----------------------------- BUILD KERNEL -----------------------------*/
+  // ################################ BUILD KERNEL ################################ 
   // Build the executable and check errors
-  err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
+  err = clBuildProgram(program, 1, devices_ids[0], NULL, NULL, NULL);
   if (err != CL_SUCCESS){
     size_t len;
     char buffer[2048];
 
     printf("Error: Some error at building process.\n");
-    clGetProgramBuildInfo(program, NULL, CL_PROGRAM_BUILD_LOG, NULL, buffer, &len);
+    // first call to determine the size of the build log
+    clGetProgramBuildInfo(program, devices_ids[0][0], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
+    buffer[len] = '\0';
+    // second call to retrieve the actual log data
+    clGetProgramBuildInfo(program, devices_ids[0][0], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
     printf("%s\n", buffer);
     exit(-1);
   }
 
-  /*----------------------------- CREATE KERNEL -----------------------------*/
+  // ################################  CREATE KERNEL ################################ 
   // Create a compute kernel with the program we want to run
-  kernel = clCreateKernel(program, "demo", &err);
+  kernel = clCreateKernel(program, "pow_of_two", &err);
   cl_error(err, "Failed to create kernel from the program\n");
 
-  /*----------------------------- CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  -----------------------------*/
-  float *input_array_host = (float *)malloc(N * sizeof(float));
+  // ################################  CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  ################################ 
+  float input_array_host[N];
   if (input_array_host == NULL) {
       perror("Failed to allocate memory for input_array_host");
       exit(EXIT_FAILURE);
   }
-  initializeArray(input_array_host, N);
+  initArray(input_array_host, N);
 
-  float *output_array_host = (float *)malloc(N * sizeof(float));
+  float output_array_host[N];
   if (output_array_host == NULL) {
       perror("Failed to allocate memory for output_array_host");
       exit(EXIT_FAILURE);
   }
+  initArray(output_array_host, N);
 
-  /*----------------------------- CREATE INPUT AND OUTPUT ARRAYS DEVICE MEMORY  -----------------------------*/
-  cl_mem in_device_object  = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(cl_float)*N, NULL, &err);
+  // ################################ CREATE INPUT AND OUTPUT ARRAYS DEVICE MEMORY  ################################ 
+  cl_mem in_device_object = clCreateBuffer(context, CL_MEM_READ_ONLY, sizeof(cl_float) * N, NULL, &err);
   cl_error(err, "Failed to create memory buffer at device\n");
-  cl_mem out_device_object = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(cl_float)*N, NULL, &err);
+  cl_mem out_device_object = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(cl_float) * N, NULL, &err);
   cl_error(err, "Failed to create memory buffer at device\n");
 
-  /*----------------------------- COPY DATA FROM HOST TO DEV  -----------------------------*/
-  // Write date into the memory object 
+  // ################################ COPY DATA FROM HOST TO DEV  ################################
+
+  // Write data into the memory object
   err = clEnqueueWriteBuffer(command_queue, in_device_object, CL_TRUE, 0, sizeof(float) * N, &input_array_host, 0, NULL, NULL);
   cl_error(err, "Failed to enqueue a write command\n");
 
-  /*----------------------------- PASS ARGUMENTS  -----------------------------*/
-    // Set the arguments to the kernel
+  // ################################ PASS ARGUMENTS  ################################
+
+  // Set the arguments to the kernel
   err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &in_device_object);
   cl_error(err, "Failed to set argument 0\n");
   err = clSetKernelArg(kernel, 1, sizeof(cl_mem), &out_device_object);
   cl_error(err, "Failed to set argument 1\n");
-  err = clSetKernelArg(kernel, 2, N);
+  err = clSetKernelArg(kernel, 2, sizeof(unsigned int), &N);
   cl_error(err, "Failed to set argument 2\n");
+  
 
-  /*----------------------------- LAUNCH KERNEL FUNCTION -----------------------------*/
+  // ################################ LAUNCH KERNEL FUNCTION ################################ 
   // Launch Kernel
-  local_size = 128;
+  local_size = N;
   global_size = N;
   err = clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL);
-  cel_error(err, "Failed to launch kernel to the device\n");
+  cl_error(err, "Failed to launch kernel to the device\n");
+  
 
-  /*----------------------------- CHECK CORRECT EXECUTION -----------------------------*/
+  // ################################ CHECK CORRECT EXECUTION ################################ 
   //enqueue the order to read results form device memory
-  clEnqueueReadBuffer(command_queue, out_device_object, CL_TRUE, N*sizeof(cl_float), sizeof(float), &output_array_host, 0, NULL, NULL);
-  printf(" %d", output_array_host); printf("\n");
-
-  /*----------------------------- FREE MEM -----------------------------*/
+  err = clEnqueueReadBuffer(command_queue, out_device_object, CL_TRUE, 0, sizeof(float) * N, output_array_host, 0, NULL, NULL);
+  cl_error(err, "Failed to enqueue a read command\n");
+  for (int i = 0; i < N; i++){
+    printf("%f, ", output_array_host[1]);
+  }
+  
+  // ################################ FREE MEM ################################ 
   clReleaseMemObject(in_device_object);
   clReleaseMemObject(out_device_object);
   clReleaseProgram(program);
@@ -200,4 +219,5 @@ int main(int argc, char** argv)
 
   return 0;
 }
-
+//g++ basic_environ.c -o basic_environ -I "CImg-2" -lm -lpthread -lX11 -ljpeg -lOpenCL
+//./basic_environ
