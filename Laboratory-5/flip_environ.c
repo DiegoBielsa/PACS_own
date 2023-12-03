@@ -290,7 +290,10 @@ int main(int argc, char** argv)
   printf("Kernel execution time: %f seconds\n", elapsed_time_kernel_seconds);
   printf("Bandwidth from mem to kernel: %f B/s\n", bandwidth_to_kernel);
   printf("Bandwidth to mem from kernel: %f B/s\n", bandwidth_from_kernel);
-  printf("Throughput of the kernel: %f pixels flipped / seccond\n", throughput);
+  printf("Throughput of the kernel: %f pixels flipped / second\n", throughput);
+  printf("Host memory footprint (regarding the flip operation): %f B\n", (float) ((sizeof(unsigned char) * img.size()) + sizeof(unsigned int) * 2));
+  printf("Kernel memory footprint (regarding the flip operation): %f B\n", (float) ((sizeof(unsigned char) * img.size()) + sizeof(unsigned int) * 2));
+  printf("Total memory footprint (regarding the flip operation): %f B\n", (float) (((sizeof(unsigned char) * img.size()) + sizeof(unsigned int) * 2) * 2));
 
   return 0;
 }
