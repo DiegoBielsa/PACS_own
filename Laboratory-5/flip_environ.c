@@ -94,7 +94,6 @@ int main(int argc, char** argv)
   start_time = clock();
 
   // ################################ KERNEL TIME ################################ 
-  cl_event event;
   cl_event events[1];
   unsigned long start_kernel_time, end_kernel_time;
     
@@ -282,6 +281,8 @@ int main(int argc, char** argv)
   clReleaseCommandQueue(command_queue);
   clReleaseContext(context);
   clReleaseEvent(events[0]);
+  clReleaseEvent(event_to_kernel);
+  clReleaseEvent(event_from_kernel);
 
   end_time = clock();
   cpu_time = ((float) (end_time - start_time)) / CLOCKS_PER_SEC;
