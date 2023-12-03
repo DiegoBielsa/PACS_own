@@ -87,6 +87,16 @@ int main(int argc, char** argv)
   cl_command_queue command_queue;     				// compute command queue
   cl_program program;                         // compute program
   cl_kernel kernel;                           // compute kernel
+
+  // ################################ OVERALL TIME ################################ 
+  clock_t start_time, end_time;
+  float cpu_time;
+  start_time = clock();
+
+  // ################################ KERNEL TIME ################################ 
+  cl_event event;
+  cl_event events[1];
+  unsigned long start_kernel_time, end_kernel_time;
     
 
   // 1. Scan the available platforms:
@@ -195,10 +205,23 @@ int main(int argc, char** argv)
   cl_error(err, "Failed to create memory buffer at device\n");
 
   // ################################ COPY DATA FROM HOST TO DEV  ################################
+  // Measurement of bandwidth from mem to kernel bandwidth = bytes passed / time spent passing them ==> B/s
+  cl_event event_to_kernel;
+  unsigned long start_to_kernel, end_to_kernel;
 
   // Write data into the memory object
-  err = clEnqueueWriteBuffer(command_queue, img_buffer, CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, NULL);
+  err = clEnqueueWriteBuffer(command_queue, img_buffer, CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, &event_to_kernel);
   cl_error(err, "Failed to enqueue a write command\n");
+
+  clWaitForEvents(1, &event_to_kernel);
+
+  // Obtaining profiling times
+  clGetEventProfilingInfo(event_to_kernel, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_to_kernel, NULL);
+  clGetEventProfilingInfo(event_to_kernel, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end_to_kernel, NULL);
+
+  unsigned long transfer_time_to_kernel = end_to_kernel - start_to_kernel;
+  float transfer_time_to_kernel_seconds = (float)transfer_time_to_kernel * 1e-9; 
+  float bandwidth_to_kernel = (float) (sizeof(unsigned char) * img.size()) / transfer_time_to_kernel_seconds;
 
   // ################################ PASS ARGUMENTS  ################################
   unsigned int width = img.width();
@@ -217,14 +240,37 @@ int main(int argc, char** argv)
   // Launch Kernel
   local_size = 128;
   global_size = (size_t)(img.size() / 3);
-  err = clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, &global_size, &local_size, 0, NULL, NULL);
+  err = clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, &global_size, &local_size, 0, NULL, &events[0]);
   cl_error(err, "Failed to launch kernel to the device\n");
+
+  // Measuring time with an event
+  clWaitForEvents(1, &events[0]);
+
+  // Obtainint profiling times
+  clGetEventProfilingInfo(events[0], CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_kernel_time, NULL);
+  clGetEventProfilingInfo(events[0], CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end_kernel_time, NULL);
+
+  unsigned long elapsed_time_kernel = end_kernel_time - start_kernel_time;
+  float elapsed_time_kernel_seconds = (float)elapsed_time_kernel * 1e-9;
+  float throughput = (float) (img.size()) / elapsed_time_kernel_seconds;
   
 
   // ################################ READ IMAGE (AUTOMATICALLY REPLACED) ################################ 
+  cl_event event_from_kernel;
+  unsigned long start_from_kernel, end_from_kernel;
   //enqueue the order to read results form device memory
-  err = clEnqueueReadBuffer(command_queue, img_buffer, CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, NULL);
+  err = clEnqueueReadBuffer(command_queue, img_buffer, CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, &event_from_kernel);
   cl_error(err, "Failed to enqueue a read command\n");
+
+  clWaitForEvents(1, &event_from_kernel);
+
+  // Obtaining profiling times
+  clGetEventProfilingInfo(event_from_kernel, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_from_kernel, NULL);
+  clGetEventProfilingInfo(event_from_kernel, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end_from_kernel, NULL);
+
+  unsigned long transfer_time_from_kernel = end_from_kernel - start_from_kernel;
+  float transfer_time_from_kernel_seconds = (float)transfer_time_from_kernel * 1e-9; 
+  float bandwidth_from_kernel = (float) (sizeof(unsigned char) * img.size()) / transfer_time_from_kernel_seconds;
   
   convertImage(image_data, img);
   img.save("flipped.jpg");
@@ -235,6 +281,16 @@ int main(int argc, char** argv)
   clReleaseKernel(kernel);
   clReleaseCommandQueue(command_queue);
   clReleaseContext(context);
+  clReleaseEvent(events[0]);
+
+  end_time = clock();
+  cpu_time = ((float) (end_time - start_time)) / CLOCKS_PER_SEC;
+
+  printf("Overall execution time: %f seconds\n", cpu_time);
+  printf("Kernel execution time: %f seconds\n", elapsed_time_kernel_seconds);
+  printf("Bandwidth from mem to kernel: %f B/s\n", bandwidth_to_kernel);
+  printf("Bandwidth to mem from kernel: %f B/s\n", bandwidth_from_kernel);
+  printf("Throughput of the kernel: %f pixels flipped / seccond\n", throughput);
 
   return 0;
 }

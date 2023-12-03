@@ -103,6 +103,7 @@
         "vec4s": "c",
         "vec4ub": "c",
         "vec4ui": "c",
-        "vec4us": "c"
+        "vec4us": "c",
+        "math.h": "c"
     }
 }
