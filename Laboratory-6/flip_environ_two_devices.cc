@@ -66,7 +66,7 @@ void convertImage(unsigned char *array, CImg<unsigned char> &img) {
 }
 
 void runKernel(int N_images, cl_context context, cl_command_queue command_queue, cl_program program, cl_kernel kernel, 
-            size_t global_size, size_t local_size, int& err, unsigned char image_data[]) {
+            size_t global_size, size_t local_size, int& err, unsigned char** image_data, CImg<unsigned char> img) {
   cl_mem img_buffers[N_images];
   for (int i = 0; i < N_images; ++i) {
     img_buffers[i] = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(unsigned char) * img.size(), NULL, &err);
@@ -305,7 +305,7 @@ int main(int argc, char** argv)
   }
 
   const unsigned int N_images_gpu = 1;
-  unsigned char image_data_gpu[N_images_gpu][img.size()];
+  unsigned char image_data_gpu[N_images_gpu][img_1.size()];
   initArray(image_data_gpu[0], img_1);
   if (image_data_gpu == NULL) {
       perror("Failed to allocate memory for image_data_gpu");
@@ -315,72 +315,13 @@ int main(int argc, char** argv)
   // GO PARALLEL NOW
   std::vector<std::thread> thread_vector;
   thread_vector.push_back(std::thread(runKernel, N_images_cpu, cpu_context, cpu_command_queue, cpu_program, cpu_kernel, 
-                          cpu_global_size, cpu_local_size, ref(err), image_data_cpu));
+                          cpu_global_size, cpu_local_size, std::ref(err), image_data_cpu, img));
   thread_vector.push_back(std::thread(runKernel, N_images_gpu, gpu_context, gpu_command_queue, gpu_program, gpu_kernel, 
-                          gpu_global_size, gpu_local_size, ref(err), image_data_cpu));
+                          gpu_global_size, gpu_local_size, std::ref(err), image_data_cpu, img_1));
 
-  for(size_t i = 0; i < threads; ++i) {
+  for(size_t i = 0; i < thread_vector.size(); ++i) {
       thread_vector[i].join();
   }
-
-  // ################################ CREATE INPUT AND OUTPUT ARRAYS DEVICE MEMORY  ################################ 
-  
-  cl_mem img_buffers[N_images];
-  for (int i = 0; i < N_images; ++i) {
-    img_buffers[i] = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(unsigned char) * img.size(), NULL, &err);
-    cl_error(err, "Failed to create memory buffer at device\n");
-
-      // ################################ COPY DATA FROM HOST TO DEV  ################################
-    // Measurement of bandwidth from mem to kernel bandwidth = bytes passed / time spent passing them ==> B/s
-    
-    // Write data into the memory object
-    err = clEnqueueWriteBuffer(command_queue, img_buffers[i], CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data[i], 0, NULL, NULL);
-    cl_error(err, "Failed to enqueue a write command\n");
-    
-  }
-
-  // ################################ PASS ARGUMENTS  ################################
-  unsigned int width = img.width();
-  unsigned int height = img.height();
-  for (int i = 0; i < N_images; ++i) {
-    // Set the arguments to the kernel
-    err = clSetKernelArg(kernel, 0, sizeof(img_buffers[i]), &img_buffers[i]);
-    cl_error(err, "Failed to set argument 0\n");
-    err = clSetKernelArg(kernel, 1, sizeof(unsigned int), &width);
-    cl_error(err, "Failed to set argument 1\n");
-    err = clSetKernelArg(kernel, 2, sizeof(unsigned int), &height);
-    cl_error(err, "Failed to set argument 2\n");
-    
-    // ################################ LAUNCH KERNEL FUNCTION ################################ 
-    // Launch Kernel
-    local_size = 128;
-    global_size = (size_t)(img.size() / 3);
-    err = clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, &global_size, NULL, 0, NULL, NULL);
-    cl_error(err, "Failed to launch kernel to the device\n");
-  }
-  
-
-  // ################################ READ IMAGE (AUTOMATICALLY REPLACED) ################################ 
-  for (int i = 0; i < N_images; ++i) {
-    //enqueue the order to read results form device memory
-    err = clEnqueueReadBuffer(command_queue, img_buffers[i], CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data[i], 0, NULL, NULL);
-    cl_error(err, "Failed to enqueue a read command\n");
-
-    
-    char filename[50];  // Ajusta el tamaño según tus necesidades
-    sprintf(filename, "flipped%d.jpg", i);
-    
-    convertImage(image_data[i], img);
-    img.save(filename);
-  }
-  
-  
-  // ################################ FREE MEM ################################ 
-  for (int i = 0; i < N_images; ++i) clReleaseMemObject(img_buffers[i]);
-  clReleaseProgram(program);
-  clReleaseKernel(kernel);
-  clReleaseCommandQueue(command_queue);
-  clReleaseContext(context);
 
   return 0;
 }
