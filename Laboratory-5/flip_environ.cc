@@ -133,13 +133,13 @@ int main(int argc, char** argv)
 
 
   // 3. Create a context, with a device
-  cl_context_properties properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[2], 0};
-  context = clCreateContext(properties, n_devices[2], devices_ids[2], NULL, NULL, &err);
+  cl_context_properties properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[0], 0};
+  context = clCreateContext(properties, n_devices[0], devices_ids[0], NULL, NULL, &err);
   cl_error(err, "Failed to create a compute context\n");
 
   // 4. Create a command queue
   cl_command_queue_properties proprt[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0 };
-  command_queue = clCreateCommandQueueWithProperties(context, devices_ids[2][0], proprt, &err);
+  command_queue = clCreateCommandQueueWithProperties(context, devices_ids[0][0], proprt, &err);
   cl_error(err, "Failed to create a command queue\n");
 
   // ################################ GET IMAGE ################################ 
@@ -171,17 +171,17 @@ int main(int argc, char** argv)
 
   // ################################ BUILD KERNEL ################################ 
   // Build the executable and check errors
-  err = clBuildProgram(program, 1, devices_ids[2], NULL, NULL, NULL);
+  err = clBuildProgram(program, 1, devices_ids[0], NULL, NULL, NULL);
   if (err != CL_SUCCESS){
     size_t len;
     char buffer[2048];
 
     printf("Error: Some error at building process.\n");
     // first call to determine the size of the build log
-    clGetProgramBuildInfo(program, devices_ids[2][0], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
+    clGetProgramBuildInfo(program, devices_ids[0][0], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
     buffer[len] = '\0';
     // second call to retrieve the actual log data
-    clGetProgramBuildInfo(program, devices_ids[2][0], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
+    clGetProgramBuildInfo(program, devices_ids[0][0], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
     printf("%s\n", buffer);
     exit(-1);
   }
@@ -298,5 +298,5 @@ int main(int argc, char** argv)
 
   return 0;
 }
-//g++ flip_environ.cc -o flip_environ -I "CImg-2" -lm -lpthread -lX11 -ljpeg -lOpenCL -std=c++11
+//g++ flip_environ.c -o flip_environ -I "CImg-2" -lm -lpthread -lX11 -ljpeg -lOpenCL
 //./flip_environ
