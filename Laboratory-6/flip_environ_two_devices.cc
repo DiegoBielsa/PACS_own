@@ -27,11 +27,25 @@
 
 using namespace cimg_library;
 
+enum {
+  HALF_APPROACH,
+  CHUNK_APPROACH
+};
+
 typedef struct {
     unsigned char x;
     unsigned char y;
     unsigned char z;
 } uchar3;
+
+struct full_device_context {
+  cl_context context; 
+  cl_command_queue command_queue; 
+  cl_program program; 
+  cl_kernel kernel; 
+  size_t global_size; 
+  size_t local_size; 
+};
 
   
 // check error, in such a case, it exits
@@ -65,18 +79,81 @@ void convertImage(unsigned char *array, CImg<unsigned char> &img) {
     }
 }
 
-void runKernel(int N_images, cl_context context, cl_command_queue command_queue, cl_program program, cl_kernel kernel, 
-            size_t global_size, size_t local_size, int& err, CImg<unsigned char> img, bool isCpu) {
+// ################################  WORKLOAD BALANCE APPROACHES (FUNCTIONS) ################################ 
 
-  // ################################  BALANCE WORKLOAD AND CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  ################################ 
+void half(int N_images, int& N_images_cpu, int& N_images_gpu) {
+  N_images_cpu = N_images / 2;
+  N_images_gpu = N_images - N_images_cpu;
+}
+
+void divideInChunks(int N_images, int& N_images_cpu, int& N_images_gpu, float time_one_chunk_cpu, float time_one_chunk_gpu) {
+  int cpu_chunk_size = 1;
+
+  int gpu_chunk_size = time_one_chunk_cpu / time_one_chunk_gpu;
+}
+
+float timeOneChunk(full_device_context device_context, CImg<unsigned char> img) {
+  float time = 0;
+  // ################################  CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  ################################ 
   unsigned char image_data[img.size()];
   initArray(image_data, img);
-  
-  
   if (image_data == NULL) {
       perror("Failed to allocate memory for image_data");
       exit(EXIT_FAILURE);
   }
+  int err;
+  cl_mem img_buffer;
+  img_buffer = clCreateBuffer(device_context.context, CL_MEM_READ_WRITE, sizeof(unsigned char) * img.size(), NULL, &err);
+  cl_error(err, "Failed to create memory buffer at device\n");
+
+    // ################################ COPY DATA FROM HOST TO DEV  ################################
+  // Measurement of bandwidth from mem to kernel bandwidth = bytes passed / time spent passing them ==> B/s
+  
+  // Write data into the memory object
+  err = clEnqueueWriteBuffer(device_context.command_queue, img_buffer, CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, NULL);
+  cl_error(err, "Failed to enqueue a write command\n");
+    
+
+  // ################################ PASS ARGUMENTS  ################################
+  unsigned int width = img.width();
+  unsigned int height = img.height();
+
+  // Set the arguments to the kernel
+  err = clSetKernelArg(device_context.kernel, 0, sizeof(img_buffer), &img_buffer);
+  cl_error(err, "Failed to set argument 0\n");
+  err = clSetKernelArg(device_context.kernel, 1, sizeof(unsigned int), &width);
+  cl_error(err, "Failed to set argument 1\n");
+  err = clSetKernelArg(device_context.kernel, 2, sizeof(unsigned int), &height);
+  cl_error(err, "Failed to set argument 2\n");
+  
+  // ################################ LAUNCH KERNEL FUNCTION ################################ 
+  // Launch Kernel
+  err = clEnqueueNDRangeKernel(device_context.command_queue, device_context.kernel, 1, NULL, &device_context.global_size, NULL, 0, NULL, NULL);
+  cl_error(err, "Failed to launch kernel to the device\n");
+  
+
+  // ################################ READ IMAGE (AUTOMATICALLY REPLACED) ################################ 
+  //enqueue the order to read results form device memory
+  err = clEnqueueReadBuffer(device_context.command_queue, img_buffer, CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, NULL);
+  cl_error(err, "Failed to enqueue a read command\n");
+  
+  // ################################ FREE MEM ################################ 
+  clReleaseMemObject(img_buffer);
+  return time;
+}
+
+// ################################  PARALLEL KERNEL RUNNING ################################ 
+void runKernel(int N_images, cl_context context, cl_command_queue command_queue, cl_program program, cl_kernel kernel, 
+            size_t global_size, size_t local_size, int& err, CImg<unsigned char> img, bool isCpu) {
+
+  // ################################  CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  ################################ 
+  unsigned char image_data[img.size()];
+  initArray(image_data, img);
+  if (image_data == NULL) {
+      perror("Failed to allocate memory for image_data");
+      exit(EXIT_FAILURE);
+  }
+
   cl_mem img_buffers[N_images];
   for (int i = 0; i < N_images; ++i) {
     img_buffers[i] = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(unsigned char) * img.size(), NULL, &err);
@@ -137,7 +214,7 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
 
 int main(int argc, char** argv)
 {
-
+  int balance_approach = CHUNK_APPROACH; 
   if (argc < 6){ // 1 for adding gpu 0 for not adding it
     std::cout << "Usage: " << argv[0] << " <cpu_platform> <cpu_device> <gpu_platform> <gpu_device> <add_gpu>" << std::endl;
     return 1;
@@ -328,15 +405,52 @@ int main(int argc, char** argv)
     cl_error(err, "Failed to create kernel from the program\n");
   }
 
-  int N_images_cpu = 20;
+  int N_images = 2;
+
+  // ################################  WORKLOAD BALANCE APPROACHES  ################################ 
+  int N_images_cpu = 1;
   int N_images_gpu = 1;
+  full_device_context cpu_context_struct;
+  full_device_context gpu_context_struct;
+  float time_one_chunk_cpu = 0;
+  float time_one_chunk_gpu = 0;
+  switch (balance_approach)
+  {
+  case HALF_APPROACH:
+    half(N_images, N_images_cpu, N_images_gpu);
+    break;
+  case CHUNK_APPROACH:
+    cpu_context_struct.command_queue = cpu_command_queue;
+    cpu_context_struct.context = cpu_context;
+    cpu_context_struct.global_size = cpu_global_size;
+    cpu_context_struct.local_size = cpu_local_size;
+    cpu_context_struct.program = cpu_program;
+    cpu_context_struct.kernel = cpu_kernel;
+    time_one_chunk_cpu = timeOneChunk(cpu_context_struct, img);
+
+    
+    gpu_context_struct.command_queue = gpu_command_queue;
+    gpu_context_struct.context = gpu_context;
+    gpu_context_struct.global_size = gpu_global_size;
+    gpu_context_struct.local_size = gpu_local_size;
+    gpu_context_struct.program = gpu_program;
+    gpu_context_struct.kernel = gpu_kernel;
+    time_one_chunk_gpu = timeOneChunk(gpu_context_struct, img);
+    divideInChunks(N_images, N_images_cpu, N_images_gpu, time_one_chunk_cpu, time_one_chunk_gpu);
+    break;
+  default:
+    return 1;
+    break;
+  }
+  
+  
   
   // GO PARALLEL NOW
   std::vector<std::thread> thread_vector;
   thread_vector.push_back(std::thread(runKernel, N_images_cpu, cpu_context, cpu_command_queue, cpu_program, cpu_kernel, 
                           cpu_global_size, cpu_local_size, std::ref(err), img, true));
   if (add_gpu){
-  thread_vector.push_back(std::thread(runKernel, N_images_cpu, gpu_context, gpu_command_queue, gpu_program, gpu_kernel, 
+  thread_vector.push_back(std::thread(runKernel, N_images_gpu, gpu_context, gpu_command_queue, gpu_program, gpu_kernel, 
                           gpu_global_size, gpu_local_size, std::ref(err), img, true));
   }
 
