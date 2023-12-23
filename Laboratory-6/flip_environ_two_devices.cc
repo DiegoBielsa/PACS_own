@@ -93,7 +93,6 @@ void divideInChunks(int N_images, int& N_images_cpu, int& N_images_gpu, float ti
 }
 
 float timeOneChunk(full_device_context device_context, CImg<unsigned char> img) {
-  float time = 0;
   // ################################  CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  ################################ 
   unsigned char image_data[img.size()];
   initArray(image_data, img);
@@ -128,9 +127,18 @@ float timeOneChunk(full_device_context device_context, CImg<unsigned char> img) 
   
   // ################################ LAUNCH KERNEL FUNCTION ################################ 
   // Launch Kernel
-  err = clEnqueueNDRangeKernel(device_context.command_queue, device_context.kernel, 1, NULL, &device_context.global_size, NULL, 0, NULL, NULL);
+  cl_event event;
+  unsigned long start_kernel_time, end_kernel_time;
+  err = clEnqueueNDRangeKernel(device_context.command_queue, device_context.kernel, 1, NULL, &device_context.global_size, NULL, 0, NULL, &event);
   cl_error(err, "Failed to launch kernel to the device\n");
   
+  clWaitForEvents(1, &event);
+  // Obtainint profiling times
+  clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_kernel_time, NULL);
+  clGetEventProfilingInfo(event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end_kernel_time, NULL);
+
+  unsigned long elapsed_time_kernel = end_kernel_time - start_kernel_time;
+  float elapsed_time_kernel_seconds = (float)elapsed_time_kernel * 1e-9;
 
   // ################################ READ IMAGE (AUTOMATICALLY REPLACED) ################################ 
   //enqueue the order to read results form device memory
@@ -139,7 +147,7 @@ float timeOneChunk(full_device_context device_context, CImg<unsigned char> img) 
   
   // ################################ FREE MEM ################################ 
   clReleaseMemObject(img_buffer);
-  return time;
+  return elapsed_time_kernel_seconds;
 }
 
 // ################################  PARALLEL KERNEL RUNNING ################################ 
