@@ -66,7 +66,17 @@ void convertImage(unsigned char *array, CImg<unsigned char> &img) {
 }
 
 void runKernel(int N_images, cl_context context, cl_command_queue command_queue, cl_program program, cl_kernel kernel, 
-            size_t global_size, size_t local_size, int& err, unsigned char** image_data, CImg<unsigned char> img) {
+            size_t global_size, size_t local_size, int& err, CImg<unsigned char> img, bool isCpu) {
+
+  // ################################  BALANCE WORKLOAD AND CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  ################################ 
+  unsigned char image_data[img.size()];
+  initArray(image_data, img);
+  
+  
+  if (image_data == NULL) {
+      perror("Failed to allocate memory for image_data");
+      exit(EXIT_FAILURE);
+  }
   cl_mem img_buffers[N_images];
   for (int i = 0; i < N_images; ++i) {
     img_buffers[i] = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(unsigned char) * img.size(), NULL, &err);
@@ -76,7 +86,7 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
     // Measurement of bandwidth from mem to kernel bandwidth = bytes passed / time spent passing them ==> B/s
     
     // Write data into the memory object
-    err = clEnqueueWriteBuffer(command_queue, img_buffers[i], CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data[i], 0, NULL, NULL);
+    err = clEnqueueWriteBuffer(command_queue, img_buffers[i], CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, NULL);
     cl_error(err, "Failed to enqueue a write command\n");
     
   }
@@ -105,28 +115,40 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
   // ################################ READ IMAGE (AUTOMATICALLY REPLACED) ################################ 
   for (int i = 0; i < N_images; ++i) {
     //enqueue the order to read results form device memory
-    err = clEnqueueReadBuffer(command_queue, img_buffers[i], CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data[i], 0, NULL, NULL);
+    err = clEnqueueReadBuffer(command_queue, img_buffers[i], CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, NULL);
     cl_error(err, "Failed to enqueue a read command\n");
 
-    
-    char filename[50];  // Ajusta el tamaño según tus necesidades
-    sprintf(filename, "flipped%d.jpg", i);
-    
-    convertImage(image_data[i], img);
-    img.save(filename);
+    if (i == 0 || i == N_images - 1) {
+      char file_name[50];  
+      sprintf(file_name, "flipped%d.jpg", i);
+      
+      convertImage(image_data, img);
+      img.save(file_name);
+    }
   }
   
   
   // ################################ FREE MEM ################################ 
   for (int i = 0; i < N_images; ++i) clReleaseMemObject(img_buffers[i]);
-  clReleaseProgram(program);
-  clReleaseKernel(kernel);
-  clReleaseCommandQueue(command_queue);
-  clReleaseContext(context);
+  
+  if (isCpu) std::cout << "Ended CPU" << std::endl;
+  else std::cout << "Ended GPU" << std::endl;
 }
 
 int main(int argc, char** argv)
 {
+
+  if (argc < 6){ // 1 for adding gpu 0 for not adding it
+    std::cout << "Usage: " << argv[0] << " <cpu_platform> <cpu_device> <gpu_platform> <gpu_device> <add_gpu>" << std::endl;
+    return 1;
+  }
+
+  int cpu_platform = std::stoi(argv[1]);
+  int cpu_device = std::stoi(argv[2]);
+  int gpu_platform = std::stoi(argv[3]);
+  int gpu_device = std::stoi(argv[4]);
+  bool add_gpu = std::stoi(argv[5]) == 1 ? true : false;
+
   const unsigned int N = 100;
   int err;                            	// error code returned from api calls
   size_t t_buf = 50;			// size of str_buffer
@@ -202,24 +224,29 @@ int main(int argc, char** argv)
 
 
   // 3. Create a context, one for the CPU and another one for the GPU
-  cl_context_properties cpu_properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[1], 0};
-  cpu_context = clCreateContext(cpu_properties, n_devices[1], devices_ids[1], NULL, NULL, &err);
+  cl_context_properties cpu_properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[cpu_platform], 0};
+  cpu_context = clCreateContext(cpu_properties, n_devices[cpu_platform], devices_ids[cpu_platform], NULL, NULL, &err);
   cl_error(err, "Failed to create a compute context\n");
 
-  cl_context_properties gpu_properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[2], 0};
-  gpu_context = clCreateContext(gpu_properties, n_devices[2], devices_ids[2], NULL, NULL, &err);
-  cl_error(err, "Failed to create a compute context\n");
+  if (add_gpu){
+    cl_context_properties gpu_properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[gpu_platform], 0};
+    gpu_context = clCreateContext(gpu_properties, n_devices[gpu_platform], devices_ids[gpu_platform], NULL, NULL, &err);
+    cl_error(err, "Failed to create a compute context\n");
+  }
+  
 
 
   // 4. Create a command queue for both devices
   cl_command_queue_properties cpu_proprt[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0 };
-  cpu_command_queue = clCreateCommandQueueWithProperties(cpu_context, devices_ids[1][0], cpu_proprt, &err);
+  cpu_command_queue = clCreateCommandQueueWithProperties(cpu_context, devices_ids[cpu_platform][cpu_device], cpu_proprt, &err);
   cl_error(err, "Failed to create a command queue\n");
 
-  // 4. Create a command queue
-  cl_command_queue_properties gpu_proprt[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0 };
-  gpu_command_queue = clCreateCommandQueueWithProperties(gpu_context, devices_ids[2][0], gpu_proprt, &err);
-  cl_error(err, "Failed to create a command queue\n");
+  if (add_gpu){
+    // 4. Create a command queue
+    cl_command_queue_properties gpu_proprt[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0 };
+    gpu_command_queue = clCreateCommandQueueWithProperties(gpu_context, devices_ids[gpu_platform][gpu_device], gpu_proprt, &err);
+    cl_error(err, "Failed to create a command queue\n");
+  }
 
   // ################################ GET IMAGE ################################ 
   CImg<unsigned char> img("image.jpg");
@@ -248,42 +275,46 @@ int main(int argc, char** argv)
   cl_error(err, "Failed to create program with source\n");
   free(sourceCode);
 
-  gpu_program = clCreateProgramWithSource(gpu_context, 1, &constSourceCode, NULL, &err);
-  cl_error(err, "Failed to create program with source\n");
-  free(sourceCode);
+  if (add_gpu){
+    gpu_program = clCreateProgramWithSource(gpu_context, 1, &constSourceCode, NULL, &err);
+    cl_error(err, "Failed to create program with source\n");
+    free(sourceCode);
+  }
   
 
   // ################################ BUILD KERNEL ################################ 
   // Build the executable and check errors
-  err = clBuildProgram(cpu_program, 1, devices_ids[1], NULL, NULL, NULL);
+  err = clBuildProgram(cpu_program, 1, devices_ids[cpu_platform], NULL, NULL, NULL);
   if (err != CL_SUCCESS){
     size_t len;
     char buffer[2048];
 
     printf("Error: Some error at building process.\n");
     // first call to determine the size of the build log
-    clGetProgramBuildInfo(cpu_program, devices_ids[1][0], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
+    clGetProgramBuildInfo(cpu_program, devices_ids[cpu_platform][cpu_device], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
     buffer[len] = '\0';
     // second call to retrieve the actual log data
-    clGetProgramBuildInfo(cpu_program, devices_ids[1][0], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
+    clGetProgramBuildInfo(cpu_program, devices_ids[cpu_platform][cpu_device], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
     printf("%s\n", buffer);
     exit(-1);
   }
 
-  // Build the executable and check errors
-  err = clBuildProgram(gpu_program, 1, devices_ids[2], NULL, NULL, NULL);
-  if (err != CL_SUCCESS){
-    size_t len;
-    char buffer[2048];
+  if (add_gpu){
+    // Build the executable and check errors
+    err = clBuildProgram(gpu_program, 1, devices_ids[gpu_platform], NULL, NULL, NULL);
+    if (err != CL_SUCCESS){
+      size_t len;
+      char buffer[2048];
 
-    printf("Error: Some error at building process.\n");
-    // first call to determine the size of the build log
-    clGetProgramBuildInfo(gpu_program, devices_ids[2][0], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
-    buffer[len] = '\0';
-    // second call to retrieve the actual log data
-    clGetProgramBuildInfo(gpu_program, devices_ids[2][0], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
-    printf("%s\n", buffer);
-    exit(-1);
+      printf("Error: Some error at building process.\n");
+      // first call to determine the size of the build log
+      clGetProgramBuildInfo(gpu_program, devices_ids[gpu_platform][gpu_device], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
+      buffer[len] = '\0';
+      // second call to retrieve the actual log data
+      clGetProgramBuildInfo(gpu_program, devices_ids[gpu_platform][gpu_device], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
+      printf("%s\n", buffer);
+      exit(-1);
+    }
   }
 
   // ################################  CREATE KERNEL ################################ 
@@ -291,36 +322,38 @@ int main(int argc, char** argv)
   cpu_kernel = clCreateKernel(cpu_program, "image_flip", &err);
   cl_error(err, "Failed to create kernel from the program\n");
 
-  // Create a compute kernel with the program we want to run
-  gpu_kernel = clCreateKernel(gpu_program, "image_flip", &err);
-  cl_error(err, "Failed to create kernel from the program\n");
-
-  // ################################  BALANCE WORKLOAD AND CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  ################################ 
-  const unsigned int N_images_cpu = 1;
-  unsigned char image_data_cpu[N_images_cpu][img.size()];
-  initArray(image_data_cpu[0], img);
-  if (image_data_cpu == NULL) {
-      perror("Failed to allocate memory for image_data_cpu");
-      exit(EXIT_FAILURE);
+  if (add_gpu){
+    // Create a compute kernel with the program we want to run
+    gpu_kernel = clCreateKernel(gpu_program, "image_flip", &err);
+    cl_error(err, "Failed to create kernel from the program\n");
   }
 
-  const unsigned int N_images_gpu = 1;
-  unsigned char image_data_gpu[N_images_gpu][img_1.size()];
-  initArray(image_data_gpu[0], img_1);
-  if (image_data_gpu == NULL) {
-      perror("Failed to allocate memory for image_data_gpu");
-      exit(EXIT_FAILURE);
-  }
-
+  int N_images_cpu = 20;
+  int N_images_gpu = 1;
+  
   // GO PARALLEL NOW
   std::vector<std::thread> thread_vector;
   thread_vector.push_back(std::thread(runKernel, N_images_cpu, cpu_context, cpu_command_queue, cpu_program, cpu_kernel, 
-                          cpu_global_size, cpu_local_size, std::ref(err), image_data_cpu, img));
-  thread_vector.push_back(std::thread(runKernel, N_images_gpu, gpu_context, gpu_command_queue, gpu_program, gpu_kernel, 
-                          gpu_global_size, gpu_local_size, std::ref(err), image_data_cpu, img_1));
+                          cpu_global_size, cpu_local_size, std::ref(err), img, true));
+  if (add_gpu){
+  thread_vector.push_back(std::thread(runKernel, N_images_cpu, gpu_context, gpu_command_queue, gpu_program, gpu_kernel, 
+                          gpu_global_size, gpu_local_size, std::ref(err), img, true));
+  }
 
   for(size_t i = 0; i < thread_vector.size(); ++i) {
       thread_vector[i].join();
+  }
+
+  clReleaseProgram(cpu_program);
+  clReleaseKernel(cpu_kernel);
+  clReleaseCommandQueue(cpu_command_queue);
+  clReleaseContext(cpu_context);
+
+  if (add_gpu){
+    clReleaseProgram(gpu_program);
+    clReleaseKernel(gpu_kernel);
+    clReleaseCommandQueue(gpu_command_queue);
+    clReleaseContext(gpu_context);
   }
 
   return 0;
