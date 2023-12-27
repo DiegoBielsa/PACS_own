@@ -83,15 +83,25 @@ void convertImage(unsigned char *array, CImg<unsigned char> &img) {
 
 // ################################  WORKLOAD BALANCE APPROACHES (FUNCTIONS) ################################ 
 
-void half(int N_images, int& N_images_cpu, int& N_images_gpu) {
-  N_images_cpu = N_images / 2;
-  N_images_gpu = N_images - N_images_cpu;
+void half(int N_images, int& N_images_gpu1, int& N_images_gpu2) {
+  N_images_gpu1 = N_images / 2;
+  N_images_gpu2 = N_images - N_images_gpu1;
 }
 
-void divideInChunks(int N_images, int& N_images_cpu, int& N_images_gpu, float time_one_chunk_cpu, float time_one_chunk_gpu) {
-  int gpu2_chunk_size = 1;
-
-  int gpu1_chunk_size = time_one_chunk_cpu / time_one_chunk_gpu;
+void divideInChunks(int N_images, int& N_images_gpu1, int& N_images_gpu2, float time_one_chunk_gpu1, float time_one_chunk_gpu2) {
+  if (time_one_chunk_gpu1 > time_one_chunk_gpu2) { // gpu2 is faster, more images to it
+    int gpu2_chunk_size = time_one_chunk_gpu1 / time_one_chunk_gpu2; // this will give a value bigger than one, meaning more images per chunk
+    std::cout << "gpu2 is " << gpu2_chunk_size << " times faster (rounded to int)" << std::endl;
+    N_images_gpu1 = N_images / (gpu2_chunk_size + 1);
+    N_images_gpu2 = N_images - N_images_gpu1;
+  } else if (time_one_chunk_gpu2 > time_one_chunk_gpu1) { // gpu1 is faster, more images to it
+    int gpu1_chunk_size = time_one_chunk_gpu2 / time_one_chunk_gpu1; // this will give a value bigger than one, meaning more images per chunk
+    std::cout << "gpu1 is " << gpu1_chunk_size << " times faster (rounded to int)" << std::endl;
+    N_images_gpu2 = N_images / (gpu1_chunk_size + 1);
+    N_images_gpu1 = N_images - N_images_gpu2;
+  } else { // equals, then go half
+    half(N_images, N_images_gpu1, N_images_gpu2);
+  }
 }
 
 float timeOneChunk(full_device_context device_context, CImg<unsigned char> img) {
@@ -407,6 +417,7 @@ int main(int argc, char** argv)
       gpu1_context_struct.program = program;
       gpu1_context_struct.kernel = kernel;
       time_one_chunk_gpu1 = timeOneChunk(gpu1_context_struct, img);
+      std::cout << "Time one chunk gpu1: " << time_one_chunk_gpu1 << std::endl;
 
       gpu2_context_struct.command_queue = gpu2_command_queue;
       gpu2_context_struct.context = context;
@@ -415,7 +426,8 @@ int main(int argc, char** argv)
       gpu2_context_struct.program = program;
       gpu2_context_struct.kernel = kernel;
       time_one_chunk_gpu2 = timeOneChunk(gpu2_context_struct, img);
-      divideInChunks(N_images, N_images_gpu1, N_images_gpu2, time_one_chunk_gpu1, time_one_chunk_gpu1);
+      std::cout << "Time one chunk gpu2: " << time_one_chunk_gpu2 << std::endl;
+      divideInChunks(N_images, N_images_gpu1, N_images_gpu2, time_one_chunk_gpu1, time_one_chunk_gpu2);
       break;
     default:
       return 1;
