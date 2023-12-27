@@ -154,7 +154,7 @@ float timeOneChunk(full_device_context device_context, CImg<unsigned char> img) 
 
 // ################################  PARALLEL KERNEL RUNNING ################################ 
 void runKernel(int N_images, cl_context context, cl_command_queue command_queue, cl_program program, cl_kernel kernel, 
-            size_t global_size, size_t local_size, int& err, CImg<unsigned char> img, bool isCpu) {
+            size_t global_size, size_t local_size, int& err, CImg<unsigned char> img, bool isGPU1) {
 
   // ################################  CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  ################################ 
   unsigned char image_data[img.size()];
@@ -178,6 +178,7 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
     
   }
 
+
   // ################################ PASS ARGUMENTS  ################################
   unsigned int width = img.width();
   unsigned int height = img.height();
@@ -192,8 +193,6 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
     
     // ################################ LAUNCH KERNEL FUNCTION ################################ 
     // Launch Kernel
-    local_size = 128;
-    global_size = (size_t)(img.size() / 3);
     err = clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, &global_size, NULL, 0, NULL, NULL);
     cl_error(err, "Failed to launch kernel to the device\n");
   }
@@ -207,7 +206,8 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
 
     if (i == 0 || i == N_images - 1) {
       char file_name[50];  
-      sprintf(file_name, "flipped%d.jpg", i);
+      if (isGPU1) sprintf(file_name, "gpu1_flipped%d.jpg", i);
+      else sprintf(file_name, "gpu2_flipped%d.jpg", i);
       
       convertImage(image_data, img);
       img.save(file_name);
@@ -218,15 +218,14 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
   // ################################ FREE MEM ################################ 
   for (int i = 0; i < N_images; ++i) clReleaseMemObject(img_buffers[i]);
   
-  if (isCpu) std::cout << "Ended CPU" << std::endl;
-  else std::cout << "Ended GPU" << std::endl;
+  if (isGPU1) std::cout << "Ended GPU1" << std::endl;
+  else std::cout << "Ended GPU2" << std::endl;
 }
 
 int main(int argc, char** argv)
 {
-  int balance_approach = CHUNK_APPROACH; 
-  if (argc < 5){ // 1 for adding second gpu 0 for not adding it
-    std::cout << "Usage: " << argv[0] << " <platform> <gpu1_device> <gpu2_device> <add_second_gpu>" << std::endl;
+  if (argc < 7){ // 1 for adding second gpu 0 for not adding it
+    std::cout << "Usage: " << argv[0] << " <platform> <gpu1_device> <gpu2_device> <add_second_gpu> <N_images> <balance_approach>" << std::endl;
     return 1;
   }
 
@@ -234,9 +233,13 @@ int main(int argc, char** argv)
   int gpu1_device = std::stoi(argv[2]);
   int gpu2_device = std::stoi(argv[3]);
   bool add_gpu = std::stoi(argv[4]) == 1 ? true : false;
+  int N_images = std::stoi(argv[5]);
+  int balance_approach = std::stoi(argv[6]) == 0 ? HALF_APPROACH : CHUNK_APPROACH; 
 
   const unsigned int N = 100;
   int err;                            	// error code returned from api calls
+  int gpu1_err;                            	// error code returned from api calls
+  int gpu2_err;                            	// error code returned from api calls
   size_t t_buf = 50;			// size of str_buffer
   char str_buffer[t_buf];		// auxiliary buffer	
   size_t e_buf;				// effective size of str_buffer in use
@@ -255,16 +258,15 @@ int main(int argc, char** argv)
   cl_uint n_devices[num_platforms_ids];				// effective number of devices in use for each platform
 	
   cl_context context;                 				// compute context
+  cl_program program;                         // compute program
+  cl_kernel kernel;                           // compute kernel
 
   cl_device_id gpu2_device_id;             				// compute device id 
   cl_command_queue gpu2_command_queue;     				// compute command queue
-  cl_program gpu2_program;                         // compute program
-  cl_kernel gpu2_kernel;                           // compute kernel
+
 
   cl_device_id gpu1_device_id;             				// compute device id 
   cl_command_queue gpu1_command_queue;     				// compute command queue
-  cl_program gpu1_program;                         // compute program
-  cl_kernel gpu1_kernel;                           // compute kernel
 
   // ################################ OVERALL TIME ################################ 
   clock_t start_time, end_time;
@@ -349,95 +351,69 @@ int main(int argc, char** argv)
 
   // create program from buffer 
   const char* constSourceCode = (const char*)sourceCode;
-  gpu1_program = clCreateProgramWithSource(context, 1, &constSourceCode, NULL, &err);
+  program = clCreateProgramWithSource(context, 1, &constSourceCode, NULL, &err);
   cl_error(err, "Failed to create program with source\n");
   free(sourceCode);
-
-  if (add_gpu){
-    gpu2_program = clCreateProgramWithSource(context, 1, &constSourceCode, NULL, &err);
-    cl_error(err, "Failed to create program with source\n");
-    free(sourceCode);
-  }
   
 
   // ################################ BUILD KERNEL ################################ 
   // Build the executable and check errors
-  err = clBuildProgram(gpu1_program, 1, devices_ids[platform], NULL, NULL, NULL);
+  err = clBuildProgram(program, 2, devices_ids[platform], NULL, NULL, NULL);
   if (err != CL_SUCCESS){
     size_t len;
     char buffer[2048];
 
     printf("Error: Some error at building process.\n");
     // first call to determine the size of the build log
-    clGetProgramBuildInfo(gpu1_program, devices_ids[platform][gpu1_device], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
+    clGetProgramBuildInfo(program, devices_ids[platform][gpu1_device], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
     buffer[len] = '\0';
     // second call to retrieve the actual log data
-    clGetProgramBuildInfo(gpu1_program, devices_ids[platform][gpu1_device], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
+    clGetProgramBuildInfo(program, devices_ids[platform][gpu1_device], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
     printf("%s\n", buffer);
     exit(-1);
   }
 
-  if (add_gpu){
-    // Build the executable and check errors
-    err = clBuildProgram(gpu2_program, 1, devices_ids[platform], NULL, NULL, NULL);
-    if (err != CL_SUCCESS){
-      size_t len;
-      char buffer[2048];
-
-      printf("Error: Some error at building process.\n");
-      // first call to determine the size of the build log
-      clGetProgramBuildInfo(gpu2_program, devices_ids[platform][gpu2_device], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
-      buffer[len] = '\0';
-      // second call to retrieve the actual log data
-      clGetProgramBuildInfo(gpu2_program, devices_ids[platform][gpu2_device], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
-      printf("%s\n", buffer);
-      exit(-1);
-    }
-  }
-
   // ################################  CREATE KERNEL ################################ 
   // Create a compute kernel with the program we want to run
-  gpu1_kernel = clCreateKernel(gpu1_program, "image_flip", &err);
+  kernel = clCreateKernel(program, "image_flip", &err);
   cl_error(err, "Failed to create kernel from the program\n");
-
-  if (add_gpu){
-    // Create a compute kernel with the program we want to run
-    gpu2_kernel = clCreateKernel(gpu2_program, "image_flip", &err);
-    cl_error(err, "Failed to create kernel from the program\n");
-  }
 
   
 
   // ################################  WORKLOAD BALANCE APPROACHES  ################################ 
-  int N_images = 2;
   int N_images_gpu1 = N_images;
   int N_images_gpu2 = 0;
   full_device_context gpu2_context_struct;
   full_device_context gpu1_context_struct;
   float time_one_chunk_gpu1 = 0;
   float time_one_chunk_gpu2 = 0;
+  gpu1_global_size = (size_t)(img.size() / 3);
+  gpu1_local_size = NULL;
+  gpu2_global_size = (size_t)(img.size() / 3);
+  gpu2_local_size = NULL;
   if (add_gpu){
     switch (balance_approach)
     {
     case HALF_APPROACH:
+      std::cout << "Approach selected: HALF_APPROACH" << std::endl;
       half(N_images, N_images_gpu1, N_images_gpu2);
       break;
     case CHUNK_APPROACH:
+      std::cout << "Approach selected: CHUNK_APPROACH" << std::endl;
       gpu1_context_struct.command_queue = gpu1_command_queue;
       gpu1_context_struct.context = context;
       gpu1_context_struct.global_size = gpu1_global_size;
       gpu1_context_struct.local_size = gpu1_local_size;
-      gpu1_context_struct.program = gpu1_program;
-      gpu1_context_struct.kernel = gpu1_kernel;
+      gpu1_context_struct.program = program;
+      gpu1_context_struct.kernel = kernel;
       time_one_chunk_gpu1 = timeOneChunk(gpu1_context_struct, img);
 
-      
       gpu2_context_struct.command_queue = gpu2_command_queue;
       gpu2_context_struct.context = context;
       gpu2_context_struct.global_size = gpu2_global_size;
       gpu2_context_struct.local_size = gpu2_local_size;
-      gpu2_context_struct.program = gpu2_program;
-      gpu2_context_struct.kernel = gpu2_kernel;
+      gpu2_context_struct.program = program;
+      gpu2_context_struct.kernel = kernel;
       time_one_chunk_gpu2 = timeOneChunk(gpu2_context_struct, img);
       divideInChunks(N_images, N_images_gpu1, N_images_gpu2, time_one_chunk_gpu1, time_one_chunk_gpu1);
       break;
@@ -450,12 +426,14 @@ int main(int argc, char** argv)
   
   
   // GO PARALLEL NOW
+  std::cout << "Number of images for gpu1: " << N_images_gpu1 << std::endl;
+  std::cout << "Number of images for gpu2: " << N_images_gpu2 << std::endl;
   std::vector<std::thread> thread_vector;
-  thread_vector.push_back(std::thread(runKernel, N_images_gpu1, context, gpu1_command_queue, gpu1_program, gpu1_kernel, 
-                          gpu1_global_size, gpu1_local_size, std::ref(err), img, true));
+  thread_vector.push_back(std::thread(runKernel, N_images_gpu1, context, gpu1_command_queue, program, kernel, 
+                          gpu1_global_size, gpu1_local_size, std::ref(gpu1_err), img, true));
   if (add_gpu){
-  thread_vector.push_back(std::thread(runKernel, N_images_gpu2, context, gpu2_command_queue, gpu2_program, gpu2_kernel, 
-                          gpu2_global_size, gpu2_local_size, std::ref(err), img, true));
+  thread_vector.push_back(std::thread(runKernel, N_images_gpu2, context, gpu2_command_queue, program, kernel, 
+                          gpu2_global_size, gpu2_local_size, std::ref(gpu2_err), img, false));
   }
 
   for(size_t i = 0; i < thread_vector.size(); ++i) {
@@ -464,14 +442,12 @@ int main(int argc, char** argv)
 
   clReleaseContext(context);
 
-  clReleaseProgram(gpu1_program);
-  clReleaseKernel(gpu1_kernel);
+  clReleaseProgram(program);
+  clReleaseKernel(kernel);
   clReleaseCommandQueue(gpu1_command_queue);
   
 
   if (add_gpu){
-    clReleaseProgram(gpu2_program);
-    clReleaseKernel(gpu2_kernel);
     clReleaseCommandQueue(gpu2_command_queue);
   }
 
