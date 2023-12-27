@@ -17,10 +17,12 @@
 #include <sys/stat.h>
 #include <iostream>
 #include <thread>
+#include <vector>
 #include "CImg.h"
 #ifdef __APPLE__
   #include <OpenCL/opencl.h>
 #else
+  #define CL_TARGET_OPENCL_VERSION 220
   #include <CL/cl.h>
 #endif
 
@@ -87,9 +89,9 @@ void half(int N_images, int& N_images_cpu, int& N_images_gpu) {
 }
 
 void divideInChunks(int N_images, int& N_images_cpu, int& N_images_gpu, float time_one_chunk_cpu, float time_one_chunk_gpu) {
-  int cpu_chunk_size = 1;
+  int gpu2_chunk_size = 1;
 
-  int gpu_chunk_size = time_one_chunk_cpu / time_one_chunk_gpu;
+  int gpu1_chunk_size = time_one_chunk_cpu / time_one_chunk_gpu;
 }
 
 float timeOneChunk(full_device_context device_context, CImg<unsigned char> img) {
@@ -223,16 +225,15 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
 int main(int argc, char** argv)
 {
   int balance_approach = CHUNK_APPROACH; 
-  if (argc < 6){ // 1 for adding gpu 0 for not adding it
-    std::cout << "Usage: " << argv[0] << " <cpu_platform> <cpu_device> <gpu_platform> <gpu_device> <add_gpu>" << std::endl;
+  if (argc < 5){ // 1 for adding second gpu 0 for not adding it
+    std::cout << "Usage: " << argv[0] << " <platform> <gpu1_device> <gpu2_device> <add_second_gpu>" << std::endl;
     return 1;
   }
 
-  int cpu_platform = std::stoi(argv[1]);
-  int cpu_device = std::stoi(argv[2]);
-  int gpu_platform = std::stoi(argv[3]);
-  int gpu_device = std::stoi(argv[4]);
-  bool add_gpu = std::stoi(argv[5]) == 1 ? true : false;
+  int platform = std::stoi(argv[1]);
+  int gpu1_device = std::stoi(argv[2]);
+  int gpu2_device = std::stoi(argv[3]);
+  bool add_gpu = std::stoi(argv[4]) == 1 ? true : false;
 
   const unsigned int N = 100;
   int err;                            	// error code returned from api calls
@@ -240,11 +241,11 @@ int main(int argc, char** argv)
   char str_buffer[t_buf];		// auxiliary buffer	
   size_t e_buf;				// effective size of str_buffer in use
 	    
-  size_t cpu_global_size;                      	// global domain size for our calculation
-  size_t cpu_local_size;                       	// local domain size for our calculation
+  size_t gpu2_global_size;                      	// global domain size for our calculation
+  size_t gpu2_local_size;                       	// local domain size for our calculation
 
-  size_t gpu_global_size;                      	// global domain size for our calculation
-  size_t gpu_local_size;                       	// local domain size for our calculation
+  size_t gpu1_global_size;                      	// global domain size for our calculation
+  size_t gpu1_local_size;                       	// local domain size for our calculation
 
   const cl_uint num_platforms_ids = 10;				// max of allocatable platforms
   cl_platform_id platforms_ids[num_platforms_ids];		// array of platforms
@@ -253,21 +254,21 @@ int main(int argc, char** argv)
   cl_device_id devices_ids[num_platforms_ids][num_devices_ids];	// array of devices
   cl_uint n_devices[num_platforms_ids];				// effective number of devices in use for each platform
 	
-  cl_device_id cpu_device_id;             				// compute device id 
-  cl_context cpu_context;                 				// compute context
-  cl_command_queue cpu_command_queue;     				// compute command queue
-  cl_program cpu_program;                         // compute program
-  cl_kernel cpu_kernel;                           // compute kernel
+  cl_context context;                 				// compute context
 
-  cl_device_id gpu_device_id;             				// compute device id 
-  cl_context gpu_context;                 				// compute context
-  cl_command_queue gpu_command_queue;     				// compute command queue
-  cl_program gpu_program;                         // compute program
-  cl_kernel gpu_kernel;                           // compute kernel
+  cl_device_id gpu2_device_id;             				// compute device id 
+  cl_command_queue gpu2_command_queue;     				// compute command queue
+  cl_program gpu2_program;                         // compute program
+  cl_kernel gpu2_kernel;                           // compute kernel
+
+  cl_device_id gpu1_device_id;             				// compute device id 
+  cl_command_queue gpu1_command_queue;     				// compute command queue
+  cl_program gpu1_program;                         // compute program
+  cl_kernel gpu1_kernel;                           // compute kernel
 
   // ################################ OVERALL TIME ################################ 
   clock_t start_time, end_time;
-  float cpu_time;
+  float gpu2_time;
   start_time = clock();
 
   // ################################ KERNEL TIME ################################ 
@@ -308,28 +309,20 @@ int main(int argc, char** argv)
   // ***Task***: print on the screen the cache size, global mem size, local memsize, max work group size, profiling timer resolution and ... of each device
 
 
-  // 3. Create a context, one for the CPU and another one for the GPU
-  cl_context_properties cpu_properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[cpu_platform], 0};
-  cpu_context = clCreateContext(cpu_properties, n_devices[cpu_platform], devices_ids[cpu_platform], NULL, NULL, &err);
+  // 3. Create a context
+  cl_context_properties properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[platform], 0};
+  context = clCreateContext(properties, n_devices[platform], devices_ids[platform], NULL, NULL, &err);
   cl_error(err, "Failed to create a compute context\n");
 
-  if (add_gpu){
-    cl_context_properties gpu_properties[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms_ids[gpu_platform], 0};
-    gpu_context = clCreateContext(gpu_properties, n_devices[gpu_platform], devices_ids[gpu_platform], NULL, NULL, &err);
-    cl_error(err, "Failed to create a compute context\n");
-  }
-  
-
-
   // 4. Create a command queue for both devices
-  cl_command_queue_properties cpu_proprt[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0 };
-  cpu_command_queue = clCreateCommandQueueWithProperties(cpu_context, devices_ids[cpu_platform][cpu_device], cpu_proprt, &err);
+  cl_command_queue_properties gpu1_proprt[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0 };
+  gpu1_command_queue = clCreateCommandQueueWithProperties(context, devices_ids[platform][gpu1_device], gpu1_proprt, &err);
   cl_error(err, "Failed to create a command queue\n");
 
   if (add_gpu){
     // 4. Create a command queue
-    cl_command_queue_properties gpu_proprt[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0 };
-    gpu_command_queue = clCreateCommandQueueWithProperties(gpu_context, devices_ids[gpu_platform][gpu_device], gpu_proprt, &err);
+    cl_command_queue_properties gpu2_proprt[] = { CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0 };
+    gpu2_command_queue = clCreateCommandQueueWithProperties(context, devices_ids[platform][gpu2_device], gpu2_proprt, &err);
     cl_error(err, "Failed to create a command queue\n");
   }
 
@@ -356,12 +349,12 @@ int main(int argc, char** argv)
 
   // create program from buffer 
   const char* constSourceCode = (const char*)sourceCode;
-  cpu_program = clCreateProgramWithSource(cpu_context, 1, &constSourceCode, NULL, &err);
+  gpu1_program = clCreateProgramWithSource(context, 1, &constSourceCode, NULL, &err);
   cl_error(err, "Failed to create program with source\n");
   free(sourceCode);
 
   if (add_gpu){
-    gpu_program = clCreateProgramWithSource(gpu_context, 1, &constSourceCode, NULL, &err);
+    gpu2_program = clCreateProgramWithSource(context, 1, &constSourceCode, NULL, &err);
     cl_error(err, "Failed to create program with source\n");
     free(sourceCode);
   }
@@ -369,34 +362,34 @@ int main(int argc, char** argv)
 
   // ################################ BUILD KERNEL ################################ 
   // Build the executable and check errors
-  err = clBuildProgram(cpu_program, 1, devices_ids[cpu_platform], NULL, NULL, NULL);
+  err = clBuildProgram(gpu1_program, 1, devices_ids[platform], NULL, NULL, NULL);
   if (err != CL_SUCCESS){
     size_t len;
     char buffer[2048];
 
     printf("Error: Some error at building process.\n");
     // first call to determine the size of the build log
-    clGetProgramBuildInfo(cpu_program, devices_ids[cpu_platform][cpu_device], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
+    clGetProgramBuildInfo(gpu1_program, devices_ids[platform][gpu1_device], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
     buffer[len] = '\0';
     // second call to retrieve the actual log data
-    clGetProgramBuildInfo(cpu_program, devices_ids[cpu_platform][cpu_device], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
+    clGetProgramBuildInfo(gpu1_program, devices_ids[platform][gpu1_device], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
     printf("%s\n", buffer);
     exit(-1);
   }
 
   if (add_gpu){
     // Build the executable and check errors
-    err = clBuildProgram(gpu_program, 1, devices_ids[gpu_platform], NULL, NULL, NULL);
+    err = clBuildProgram(gpu2_program, 1, devices_ids[platform], NULL, NULL, NULL);
     if (err != CL_SUCCESS){
       size_t len;
       char buffer[2048];
 
       printf("Error: Some error at building process.\n");
       // first call to determine the size of the build log
-      clGetProgramBuildInfo(gpu_program, devices_ids[gpu_platform][gpu_device], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
+      clGetProgramBuildInfo(gpu2_program, devices_ids[platform][gpu2_device], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
       buffer[len] = '\0';
       // second call to retrieve the actual log data
-      clGetProgramBuildInfo(gpu_program, devices_ids[gpu_platform][gpu_device], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
+      clGetProgramBuildInfo(gpu2_program, devices_ids[platform][gpu2_device], CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
       printf("%s\n", buffer);
       exit(-1);
     }
@@ -404,78 +397,82 @@ int main(int argc, char** argv)
 
   // ################################  CREATE KERNEL ################################ 
   // Create a compute kernel with the program we want to run
-  cpu_kernel = clCreateKernel(cpu_program, "image_flip", &err);
+  gpu1_kernel = clCreateKernel(gpu1_program, "image_flip", &err);
   cl_error(err, "Failed to create kernel from the program\n");
 
   if (add_gpu){
     // Create a compute kernel with the program we want to run
-    gpu_kernel = clCreateKernel(gpu_program, "image_flip", &err);
+    gpu2_kernel = clCreateKernel(gpu2_program, "image_flip", &err);
     cl_error(err, "Failed to create kernel from the program\n");
   }
 
-  int N_images = 2;
+  
 
   // ################################  WORKLOAD BALANCE APPROACHES  ################################ 
-  int N_images_cpu = 1;
-  int N_images_gpu = 1;
-  full_device_context cpu_context_struct;
-  full_device_context gpu_context_struct;
-  float time_one_chunk_cpu = 0;
-  float time_one_chunk_gpu = 0;
-  switch (balance_approach)
-  {
-  case HALF_APPROACH:
-    half(N_images, N_images_cpu, N_images_gpu);
-    break;
-  case CHUNK_APPROACH:
-    cpu_context_struct.command_queue = cpu_command_queue;
-    cpu_context_struct.context = cpu_context;
-    cpu_context_struct.global_size = cpu_global_size;
-    cpu_context_struct.local_size = cpu_local_size;
-    cpu_context_struct.program = cpu_program;
-    cpu_context_struct.kernel = cpu_kernel;
-    time_one_chunk_cpu = timeOneChunk(cpu_context_struct, img);
+  int N_images = 2;
+  int N_images_gpu1 = N_images;
+  int N_images_gpu2 = 0;
+  full_device_context gpu2_context_struct;
+  full_device_context gpu1_context_struct;
+  float time_one_chunk_gpu1 = 0;
+  float time_one_chunk_gpu2 = 0;
+  if (add_gpu){
+    switch (balance_approach)
+    {
+    case HALF_APPROACH:
+      half(N_images, N_images_gpu1, N_images_gpu2);
+      break;
+    case CHUNK_APPROACH:
+      gpu1_context_struct.command_queue = gpu1_command_queue;
+      gpu1_context_struct.context = context;
+      gpu1_context_struct.global_size = gpu1_global_size;
+      gpu1_context_struct.local_size = gpu1_local_size;
+      gpu1_context_struct.program = gpu1_program;
+      gpu1_context_struct.kernel = gpu1_kernel;
+      time_one_chunk_gpu1 = timeOneChunk(gpu1_context_struct, img);
 
-    
-    gpu_context_struct.command_queue = gpu_command_queue;
-    gpu_context_struct.context = gpu_context;
-    gpu_context_struct.global_size = gpu_global_size;
-    gpu_context_struct.local_size = gpu_local_size;
-    gpu_context_struct.program = gpu_program;
-    gpu_context_struct.kernel = gpu_kernel;
-    time_one_chunk_gpu = timeOneChunk(gpu_context_struct, img);
-    divideInChunks(N_images, N_images_cpu, N_images_gpu, time_one_chunk_cpu, time_one_chunk_gpu);
-    break;
-  default:
-    return 1;
-    break;
+      
+      gpu2_context_struct.command_queue = gpu2_command_queue;
+      gpu2_context_struct.context = context;
+      gpu2_context_struct.global_size = gpu2_global_size;
+      gpu2_context_struct.local_size = gpu2_local_size;
+      gpu2_context_struct.program = gpu2_program;
+      gpu2_context_struct.kernel = gpu2_kernel;
+      time_one_chunk_gpu2 = timeOneChunk(gpu2_context_struct, img);
+      divideInChunks(N_images, N_images_gpu1, N_images_gpu2, time_one_chunk_gpu1, time_one_chunk_gpu1);
+      break;
+    default:
+      return 1;
+      break;
+    }
   }
   
   
   
   // GO PARALLEL NOW
   std::vector<std::thread> thread_vector;
-  thread_vector.push_back(std::thread(runKernel, N_images_cpu, cpu_context, cpu_command_queue, cpu_program, cpu_kernel, 
-                          cpu_global_size, cpu_local_size, std::ref(err), img, true));
+  thread_vector.push_back(std::thread(runKernel, N_images_gpu1, context, gpu1_command_queue, gpu1_program, gpu1_kernel, 
+                          gpu1_global_size, gpu1_local_size, std::ref(err), img, true));
   if (add_gpu){
-  thread_vector.push_back(std::thread(runKernel, N_images_gpu, gpu_context, gpu_command_queue, gpu_program, gpu_kernel, 
-                          gpu_global_size, gpu_local_size, std::ref(err), img, true));
+  thread_vector.push_back(std::thread(runKernel, N_images_gpu2, context, gpu2_command_queue, gpu2_program, gpu2_kernel, 
+                          gpu2_global_size, gpu2_local_size, std::ref(err), img, true));
   }
 
   for(size_t i = 0; i < thread_vector.size(); ++i) {
       thread_vector[i].join();
   }
 
-  clReleaseProgram(cpu_program);
-  clReleaseKernel(cpu_kernel);
-  clReleaseCommandQueue(cpu_command_queue);
-  clReleaseContext(cpu_context);
+  clReleaseContext(context);
+
+  clReleaseProgram(gpu1_program);
+  clReleaseKernel(gpu1_kernel);
+  clReleaseCommandQueue(gpu1_command_queue);
+  
 
   if (add_gpu){
-    clReleaseProgram(gpu_program);
-    clReleaseKernel(gpu_kernel);
-    clReleaseCommandQueue(gpu_command_queue);
-    clReleaseContext(gpu_context);
+    clReleaseProgram(gpu2_program);
+    clReleaseKernel(gpu2_kernel);
+    clReleaseCommandQueue(gpu2_command_queue);
   }
 
   return 0;
