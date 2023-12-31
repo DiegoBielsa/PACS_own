@@ -165,6 +165,9 @@ float timeOneChunk(full_device_context device_context, CImg<unsigned char> img) 
 // ################################  PARALLEL KERNEL RUNNING ################################ 
 void runKernel(int N_images, cl_context context, cl_command_queue command_queue, cl_program program, cl_kernel kernel, 
             size_t global_size, size_t local_size, int& err, CImg<unsigned char> img, bool isGPU1) {
+  auto start = std::chrono::steady_clock::now();
+  float communication_time = 0, computation_time = 0;
+  
 
   // ################################  CREATE INPUT AND OUTPUT ARRAYS HOST MEMORY  ################################ 
   unsigned char image_data[img.size()];
@@ -174,6 +177,7 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
       exit(EXIT_FAILURE);
   }
 
+  cl_event event_to_kernel[N_images];
   cl_mem img_buffers[N_images];
   for (int i = 0; i < N_images; ++i) {
     img_buffers[i] = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(unsigned char) * img.size(), NULL, &err);
@@ -183,13 +187,27 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
     // Measurement of bandwidth from mem to kernel bandwidth = bytes passed / time spent passing them ==> B/s
     
     // Write data into the memory object
-    err = clEnqueueWriteBuffer(command_queue, img_buffers[i], CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, NULL);
+    err = clEnqueueWriteBuffer(command_queue, img_buffers[i], CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, &event_to_kernel[i]);
     cl_error(err, "Failed to enqueue a write command\n");
     
   }
+  unsigned long start_to_kernel, end_to_kernel, transfer_time_to_kernel = 0;
+  for (int i = 0; i < N_images; ++i) {
+    clWaitForEvents(1, &event_to_kernel[i]);
+
+    // Obtaining profiling times
+    clGetEventProfilingInfo(event_to_kernel[i], CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_to_kernel, NULL);
+    clGetEventProfilingInfo(event_to_kernel[i], CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end_to_kernel, NULL);
+
+    transfer_time_to_kernel += end_to_kernel - start_to_kernel;
+  }
+
+  float transfer_time_to_kernel_seconds = (float)transfer_time_to_kernel * 1e-9; 
+  communication_time += transfer_time_to_kernel_seconds;
 
 
   // ################################ PASS ARGUMENTS  ################################
+  cl_event event_kernel[N_images];
   unsigned int width = img.width();
   unsigned int height = img.height();
   for (int i = 0; i < N_images; ++i) {
@@ -203,15 +221,30 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
     
     // ################################ LAUNCH KERNEL FUNCTION ################################ 
     // Launch Kernel
-    err = clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, &global_size, NULL, 0, NULL, NULL);
+    err = clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL, &global_size, NULL, 0, NULL, &event_kernel[i]);
     cl_error(err, "Failed to launch kernel to the device\n");
   }
+
+  unsigned long start_kernel, end_kernel, time_kernel = 0;
+  for (int i = 0; i < N_images; ++i) {
+    clWaitForEvents(1, &event_kernel[i]);
+
+    // Obtaining profiling times
+    clGetEventProfilingInfo(event_kernel[i], CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_kernel, NULL);
+    clGetEventProfilingInfo(event_kernel[i], CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end_kernel, NULL);
+
+    time_kernel += end_kernel - start_kernel;
+  }
+
+  float time_kernel_seconds = (float)time_kernel * 1e-9; 
+  computation_time += time_kernel_seconds;
   
 
   // ################################ READ IMAGE (AUTOMATICALLY REPLACED) ################################ 
+  cl_event event_from_kernel[N_images];
   for (int i = 0; i < N_images; ++i) {
     //enqueue the order to read results form device memory
-    err = clEnqueueReadBuffer(command_queue, img_buffers[i], CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, NULL);
+    err = clEnqueueReadBuffer(command_queue, img_buffers[i], CL_TRUE, 0, sizeof(unsigned char) * img.size(), image_data, 0, NULL, &event_from_kernel[i]);
     cl_error(err, "Failed to enqueue a read command\n");
 
     if (i == 0 || i == N_images - 1) {
@@ -223,13 +256,33 @@ void runKernel(int N_images, cl_context context, cl_command_queue command_queue,
       img.save(file_name);
     }
   }
+
+  unsigned long start_from_kernel, end_from_kernel, transfer_time_from_kernel = 0;
+  for (int i = 0; i < N_images; ++i) {
+    clWaitForEvents(1, &event_from_kernel[i]);
+
+    // Obtaining profiling times
+    clGetEventProfilingInfo(event_from_kernel[i], CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_from_kernel, NULL);
+    clGetEventProfilingInfo(event_from_kernel[i], CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end_from_kernel, NULL);
+
+    transfer_time_from_kernel += end_from_kernel - start_from_kernel;
+  }
+
+  float transfer_time_from_kernel_seconds = (float)transfer_time_from_kernel * 1e-9; 
+  communication_time += transfer_time_from_kernel_seconds;
   
   
   // ################################ FREE MEM ################################ 
   for (int i = 0; i < N_images; ++i) clReleaseMemObject(img_buffers[i]);
-  
-  if (isGPU1) std::cout << "Ended GPU1" << std::endl;
-  else std::cout << "Ended GPU2" << std::endl;
+  auto end = std::chrono::steady_clock::now();
+  auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+  std::string device = isGPU1 ? "GPU1" : "GPU2";
+  float exec_time = elapsed_time.count() / 1000.0f;
+
+  std::cout << "Ended" << device << ", execution time: " << exec_time << "s" << std::endl;
+  std::cout << "Ended" << device << ", communication time: " << communication_time << "s" << std::endl;
+  std::cout << "Ended" << device << ", computation time: " << computation_time << "s" << std::endl;
+
 }
 
 int main(int argc, char** argv)
@@ -341,6 +394,7 @@ int main(int argc, char** argv)
   // ################################ GET IMAGE ################################ 
   CImg<unsigned char> img("image.jpg");
   CImg<unsigned char> img_1("image1.jpg");
+  std::cout << "Image size: " << sizeof(unsigned char) * img.size() << "B" << std::endl;
   
   // ################################ LOAD KERNEL ################################ 
   // Calculate size of the file
@@ -438,6 +492,7 @@ int main(int argc, char** argv)
   
   
   // GO PARALLEL NOW
+  auto start = std::chrono::steady_clock::now();
   std::cout << "Number of images for gpu1: " << N_images_gpu1 << std::endl;
   std::cout << "Number of images for gpu2: " << N_images_gpu2 << std::endl;
   std::vector<std::thread> thread_vector;
@@ -451,6 +506,10 @@ int main(int argc, char** argv)
   for(size_t i = 0; i < thread_vector.size(); ++i) {
       thread_vector[i].join();
   }
+  auto end = std::chrono::steady_clock::now();
+  auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+  float exec_time = elapsed_time.count() / 1000.0f;
+  std::cout << "FINAL EXECUTION TIME: " << exec_time << "s" << std::endl;
 
   clReleaseContext(context);
 
